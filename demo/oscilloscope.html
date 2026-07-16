@@ -42,7 +42,7 @@
             padding: 1.25rem;
             display: grid;
             gap: 1rem;
-            grid-template-rows: auto 1fr auto;
+            grid-template-rows: auto auto 1fr auto;
             max-width: 60rem;
             margin-inline: auto;
         }
@@ -66,6 +66,16 @@
             font-size: 0.78rem;
         }
 
+        nav#tabs {
+            display: flex;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+        }
+
+        nav#tabs button[data-scene] {
+            font-size: 0.75rem;
+        }
+
         .scope {
             position: relative;
             border: 1px solid var(--edge);
@@ -81,6 +91,25 @@
             display: block;
             width: 100%;
             height: 100%;
+            position: absolute;
+            inset: 0;
+        }
+
+        canvas[hidden] {
+            display: none;
+        }
+
+        .badge {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.6rem;
+            z-index: 2;
+            font-size: 0.7rem;
+            color: var(--phos-dim);
+            background: rgba(5, 16, 10, 0.7);
+            border: 1px solid var(--edge);
+            border-radius: 0.3rem;
+            padding: 0.15rem 0.4rem;
         }
 
         .panel {
@@ -131,8 +160,13 @@
             color: var(--phos);
         }
 
+        button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
         @media (hover: hover) {
-            button:hover {
+            button:not(:disabled):hover {
                 border-color: var(--phos-dim);
             }
         }
@@ -187,11 +221,18 @@
 <body>
 <header>
     <h1>lite-worker // SCOPE</h1>
-    <span class="sub">synthesis free-runs off-thread · frameChannel moves buffers, never copies · main draws the latest</span>
+    <span class="sub">synthesis free-runs off-thread · two consumers: the main thread, or the worker's own canvas</span>
 </header>
 
+<nav id="tabs">
+    <button data-scene="chan" class="active">main draws · frameChannel</button>
+    <button data-scene="offs">worker draws · OffscreenCanvas</button>
+</nav>
+
 <div class="scope">
-    <canvas id="scope"></canvas>
+    <span class="badge" id="badge">drawing on: main thread</span>
+    <canvas id="chan"></canvas>
+    <canvas id="offs" hidden></canvas>
 </div>
 
 <div class="panel">
@@ -218,15 +259,17 @@
         <div class="stats">
             <span>fps <b id="fps">—</b></span>
             <span>frames <b id="frames">0</b></span>
-            <span>fresh/s <b id="fresh">—</b></span>
-            <span>dropped <b id="drops">0</b></span>
+            <span id="freshWrap">fresh/s <b id="fresh">—</b></span>
+            <span id="dropWrap">dropped <b id="drops">0</b></span>
         </div>
     </fieldset>
 </div>
 
-<div class="sub">One pre-allocated pool of <code>Float32</code> buffers ping-pongs through <code>frameChannel</code>:
+<div class="sub" id="caption">One pre-allocated pool of <code>Float32</code> buffers ping-pongs through <code>frameChannel</code>:
     the worker free-runs the synth faster than the screen refreshes, so intermediate frames drop (latest-wins) and
-    memory stays flat. Serve with <code>npx serve .</code> and open <code>demos/oscilloscope.html</code>.
+    memory stays flat. The second tab transfers the canvas to the worker with <code>transferControlToOffscreen()</code>
+    — the worker then draws its own frames and the main thread does nothing, so no channel is needed. Serve with <code>npx
+        serve .</code>.
 </div>
 
 <script type="importmap">
@@ -237,12 +280,15 @@
     import {defineWorker} from "@zakkster/lite-worker";
 
     // --- config (source of truth; UI hydrates from this at init) ---------------
-    const N = 1024;                 // samples per frame (power of two) = capacity, stride 1
+    const N = 1024;
     const cfg = {w: 0, f: 4, a: 0.85};
 
     // --- cached DOM refs (module-init, $-prefixed) -----------------------------
-    const $canvas = document.getElementById("scope");
-    const $ctx = $canvas.getContext("2d", {alpha: false});
+    const $tabs = document.getElementById("tabs");
+    const $chan = document.getElementById("chan");
+    const $offs = document.getElementById("offs");
+    const $badge = document.getElementById("badge");
+    const $ctx = $chan.getContext("2d", {alpha: false});
     const $waves = document.getElementById("waves");
     const $freq = document.getElementById("freq");
     const $amp = document.getElementById("amp");
@@ -252,66 +298,171 @@
     const $frames = document.getElementById("frames");
     const $fresh = document.getElementById("fresh");
     const $drops = document.getElementById("drops");
+    const $freshWrap = document.getElementById("freshWrap");
+    const $dropWrap = document.getElementById("dropWrap");
+
+    const OFFSCREEN_OK = typeof $offs.transferControlToOffscreen === "function";
 
     // --- worker: waveform synthesis, fully self-contained ----------------------
-    // The worker is the PRODUCER: it free-runs the synth and publishes frames as
-    // fast as the buffer pool allows. Constants are inlined — a worker body cannot
-    // close over anything outside itself.
+    // The worker synthesizes into a single fill(). It has two consumers:
+    //  · scene "chan": produce() publishes the frame to the main thread via
+    //    frameChannel — the main thread draws it. The channel is doing real work.
+    //  · scene "offs": the worker draws the frame to a transferred OffscreenCanvas
+    //    itself; the sample buffer never leaves the worker, so no channel is used.
     const sim = defineWorker((ctx) => {
         const TAU = Math.PI * 2;
         const N = 1024;
         const ch = ctx.frameChannel(1, {role: "producer", capacity: N, count: 2});
+        const scratch = new Float32Array(N);
         let w = 0, f = 4, a = 0.85, phase = 0;
+        let mode = "chan";
+        let octx = null, OW = 0, OH = 0, ODPR = 1;
+
         ctx.on("cfg", (c) => {
             w = c.w;
             f = c.f;
             a = c.a;
         });
+        ctx.on("mode", (m) => {
+            mode = m;
+        });
+        ctx.on("canvas", (canvas) => {
+            octx = canvas.getContext("2d", {alpha: false});
+        });
+        ctx.on("resize", (d) => {
+            if (!octx) return;
+            octx.canvas.width = d.w;
+            octx.canvas.height = d.h;
+            OW = d.w;
+            OH = d.h;
+            ODPR = d.dpr;
+        });
+
+        function fill(out) {
+            for (let i = 0; i < N; i++) {
+                const t = (i / N) * TAU * f + phase;
+                let v;
+                if (w === 0) v = Math.sin(t);
+                else if (w === 1) v = Math.sin(t) >= 0 ? 1 : -1;
+                else if (w === 2) v = 2 * ((t / TAU) % 1) - 1;
+                else v = Math.random() * 2 - 1;
+                out[i] = v * a;
+            }
+        }
+
+        function drawOffscreen() {
+            if (!octx || OW === 0) return;
+            const midY = OH / 2;
+            octx.fillStyle = "#08170f";
+            octx.fillRect(0, 0, OW, OH);
+            octx.lineWidth = 2 * ODPR;
+            octx.strokeStyle = "#35ff9e";
+            octx.beginPath();
+            const xs = OW / (N - 1);
+            for (let i = 0; i < N; i++) {
+                const y = midY - scratch[i] * midY * 0.9;
+                if (i === 0) octx.moveTo(0, y); else octx.lineTo(i * xs, y);
+            }
+            octx.stroke();
+        }
+
+        // Workers have no requestAnimationFrame; drive with a timer (~125 Hz).
+        let wf = 0, wLast = performance.now(), wEma = 8;
 
         function tick() {
-            // Wrap into [0, TAU) so phase never grows without bound.
-            phase = (phase + 0.06) % TAU;
-            // produce() fills a free buffer and transfers it; returns false when the
-            // pool is momentarily exhausted (frame dropped — latest-wins). The synth
-            // clock keeps advancing regardless.
-            ch.produce((s) => {
-                for (let i = 0; i < N; i++) {
-                    const t = (i / N) * TAU * f + phase;
-                    let v;
-                    if (w === 0) v = Math.sin(t);
-                    else if (w === 1) v = Math.sin(t) >= 0 ? 1 : -1;
-                    else if (w === 2) v = 2 * ((t / TAU) % 1) - 1;
-                    else v = Math.random() * 2 - 1;
-                    s[i] = v * a;
-                }
-            });
-            setTimeout(tick, 8); // ~125 Hz synth vs 60 Hz display -> steady latest-wins drops
+            phase = (phase + 0.06) % TAU; // wrap: phase never grows without bound
+            if (mode === "chan") {
+                ch.produce((s) => fill(s));
+            } else {
+                fill(scratch);
+                drawOffscreen();
+                const now = performance.now();
+                const dt = now - wLast;
+                wLast = now;
+                if (dt > 0) wEma += (dt - wEma) * 0.1;
+                wf = (wf + 1) | 0;
+                if ((wf & 7) === 0) ctx.post("wstat", {fps: 1000 / wEma, frames: wf});
+            }
+            setTimeout(tick, 8);
         }
 
         tick();
     }).spawn();
 
-    // --- main: the CONSUMER. Reads the freshest frame each rAF (alloc-free). ----
+    // --- main: the CONSUMER for scene "chan". ----------------------------------
     const scope = sim.frameChannel(1, {role: "consumer", capacity: N, count: 2});
     sim.post("cfg", cfg);
 
-    // --- render (rAF; zero per-sample allocation) ------------------------------
+    let scene = "chan";
+    let offsTransferred = false;
+    let workerFps = 0, workerFrames = 0;
+    sim.on("wstat", (d) => {
+        workerFps = d.fps;
+        workerFrames = d.frames;
+    });
+
+    // --- canvas sizing ---------------------------------------------------------
     let W = 0, H = 0, midY = 0, dpr = 1;
 
-    function resize() {
+    function measure(el) {
         dpr = Math.min(window.devicePixelRatio || 1, 2);
-        const r = $canvas.getBoundingClientRect();
-        W = Math.max(1, r.width | 0);
-        H = Math.max(1, r.height | 0);
-        $canvas.width = (W * dpr) | 0;
-        $canvas.height = (H * dpr) | 0;
-        $ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const r = el.getBoundingClientRect();
+        return {w: Math.max(1, (r.width * dpr) | 0), h: Math.max(1, (r.height * dpr) | 0), dpr};
+    }
+
+    function resizeChan() {
+        const m = measure($chan);
+        W = m.w;
+        H = m.h;
+        $chan.width = W;
+        $chan.height = H;
+        $ctx.setTransform(1, 0, 0, 1, 0, 0);
         midY = H / 2;
     }
 
-    window.addEventListener("resize", resize);
-    resize();
+    function pushOffsSize() {
+        if (!offsTransferred) return;
+        const m = measure($offs);
+        sim.post("resize", m);
+    }
 
+    window.addEventListener("resize", () => {
+        resizeChan();
+        pushOffsSize();
+    });
+    resizeChan();
+
+    // --- scene switching -------------------------------------------------------
+    function setScene(next) {
+        if (next === "offs" && !OFFSCREEN_OK) return;
+        scene = next;
+        for (const b of $tabs.children) b.classList.toggle("active", b.dataset.scene === next);
+        $chan.hidden = next !== "chan";
+        $offs.hidden = next !== "offs";
+        if (next === "offs" && !offsTransferred) {
+            const off = $offs.transferControlToOffscreen();
+            sim.post("canvas", off, [off]);
+            offsTransferred = true;
+            pushOffsSize();
+        }
+        // telemetry labels differ per scene
+        $freshWrap.hidden = next === "offs";
+        $dropWrap.hidden = next === "offs";
+        $badge.textContent = next === "offs" ? "drawing on: worker · main idle" : "drawing on: main thread";
+        sim.post("mode", next);
+    }
+
+    $tabs.addEventListener("click", (e) => {
+        const btn = e.target.closest("button[data-scene]");
+        if (btn) setScene(btn.dataset.scene);
+    });
+    if (!OFFSCREEN_OK) {
+        const b = $tabs.querySelector('[data-scene="offs"]');
+        b.disabled = true;
+        b.title = "OffscreenCanvas not supported in this browser";
+    }
+
+    // --- render loop (rAF) -----------------------------------------------------
     let frameCount = 0, emaDt = 16.7, lastT = performance.now(), lastStatT = lastT, freshCount = 0, lastFresh = 0;
 
     function frame(now) {
@@ -319,37 +470,38 @@
         lastT = now;
         emaDt += (dt - emaDt) * 0.1;
 
-        const hadNew = scope.hasNew;
-        const d = scope.read();       // Float32Array(N) latest, or null before first frame
-        if (hadNew) freshCount = (freshCount + 1) | 0;
-
-        // draw trace — clear + single stroked path. Cheap at this N/size. If this
-        // were pushed to much higher sample rates or canvas dimensions, the draw
-        // itself would become the bottleneck; the move then is to hand rendering off
-        // the CPU entirely — a WebGL line pass, or an OffscreenCanvas +
-        // ImageBitmapRenderingContext driven straight from the worker.
-        $ctx.fillStyle = "#08170f";
-        $ctx.fillRect(0, 0, W, H);
-        if (d) {
-            $ctx.lineWidth = 2;
-            $ctx.strokeStyle = "#35ff9e";
-            $ctx.beginPath();
-            const xs = W / (N - 1);
-            for (let i = 0; i < N; i++) {
-                const y = midY - d[i] * midY * 0.9;
-                if (i === 0) $ctx.moveTo(0, y); else $ctx.lineTo(i * xs, y);
+        if (scene === "chan") {
+            const hadNew = scope.hasNew;
+            const d = scope.read();
+            if (hadNew) freshCount = (freshCount + 1) | 0;
+            $ctx.fillStyle = "#08170f";
+            $ctx.fillRect(0, 0, W, H);
+            if (d) {
+                $ctx.lineWidth = 2 * dpr;
+                $ctx.strokeStyle = "#35ff9e";
+                $ctx.beginPath();
+                const xs = W / (N - 1);
+                for (let i = 0; i < N; i++) {
+                    const y = midY - d[i] * midY * 0.9;
+                    if (i === 0) $ctx.moveTo(0, y); else $ctx.lineTo(i * xs, y);
+                }
+                $ctx.stroke();
             }
-            $ctx.stroke();
         }
+        // In "offs" the worker owns the pixels — the main thread only reads a stat.
 
-        // telemetry throttled to ~7.5 Hz via frame-counter mask
         frameCount = (frameCount + 1) | 0;
         if ((frameCount & 7) === 0) {
             const dts = (now - lastStatT) / 1000;
-            $fps.textContent = (1000 / emaDt).toFixed(0);
-            $frames.textContent = frameCount;
-            $fresh.textContent = dts > 0 ? ((freshCount - lastFresh) / dts).toFixed(0) : "—";
-            $drops.textContent = scope.dropped.toLocaleString();
+            if (scene === "chan") {
+                $fps.textContent = (1000 / emaDt).toFixed(0);
+                $frames.textContent = frameCount;
+                $fresh.textContent = dts > 0 ? ((freshCount - lastFresh) / dts).toFixed(0) : "—";
+                $drops.textContent = scope.dropped.toLocaleString();
+            } else {
+                $fps.textContent = workerFps.toFixed(0);
+                $frames.textContent = workerFrames;
+            }
             lastFresh = freshCount;
             lastStatT = now;
         }

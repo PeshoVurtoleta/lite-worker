@@ -147,6 +147,8 @@ requestAnimationFrame(draw);
 
 **One channel owns the raw stream.** A `frameChannel` takes over `send`/`onRaw` on its transport; don't also use them directly while it's live. The typed plane (`post`/`call`/`on`) stays free for control messages like config.
 
+**OffscreenCanvas is the complement, not a competitor.** If your only consumer is a canvas, `transferControlToOffscreen()` hands it to the worker and the worker draws its own frames — the data never crosses back, so you don't need a channel at all. `frameChannel` is for when the frames *must* reach another thread: the main thread (for DOM or main-only APIs) or a second worker. The demo shows both side by side — tab one draws on the main thread through `frameChannel`, tab two transfers the canvas and draws on the worker with the main thread idle.
+
 ## Constraints & gotchas
 
 - **Self-contained body.** The function is `.toString()`-serialized; it cannot capture variables from the surrounding module. Pass everything in via `post`/`send`, or inline it in the body.
