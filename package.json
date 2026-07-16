@@ -1,0 +1,64 @@
+{
+  "name": "@zakkster/lite-worker",
+  "version": "1.1.0",
+  "description": "Zero-GC per-frame worker channel. Define a worker inline from a function, message it with transferables, keep the main thread clean at 60fps. Zero dependencies, single file.",
+  "type": "module",
+  "main": "./Worker.js",
+  "module": "./Worker.js",
+  "types": "./Worker.d.ts",
+  "exports": {
+    ".": {
+      "types": "./Worker.d.ts",
+      "node": "./Worker.js",
+      "import": "./Worker.js",
+      "default": "./Worker.js"
+    }
+  },
+  "files": [
+    "Worker.js",
+    "Worker.d.ts",
+    "CHANGELOG.md",
+    "llms.txt",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "test": "node test/Worker.test.js",
+    "check": "node --check Worker.js && tsc --noEmit --strict Worker.d.ts"
+  },
+  "keywords": [
+    "worker",
+    "web-worker",
+    "offscreen",
+    "transferable",
+    "zero-gc",
+    "60fps",
+    "inline-worker",
+    "blob-worker",
+    "rpc",
+    "frame-channel",
+    "double-buffer",
+    "backpressure",
+    "latest-wins",
+    "esm",
+    "single-file",
+    "lite"
+  ],
+  "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PeshoVurtoleta/lite-worker.git"
+  },
+  "homepage": "https://github.com/PeshoVurtoleta/lite-worker#readme",
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/PeshoVurtoleta"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

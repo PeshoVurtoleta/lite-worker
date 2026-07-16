@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>lite-worker — off-thread oscilloscope</title>
+    <style>
+        :root {
+            --bg: #05100a;
+            --bg: oklch(0.16 0.03 155);
+            --panel: #08170f;
+            --panel: oklch(0.19 0.035 158);
+            --edge: #10331f;
+            --edge: oklch(0.3 0.05 158);
+            --phos: #35ff9e;
+            --phos: oklch(0.87 0.2 158);
+            --phos-dim: #1f7d54;
+            --phos-dim: oklch(0.6 0.12 158);
+            --ink: #7dffc4;
+            --ink: oklch(0.9 0.12 160);
+            --warn: #ffcf5c;
+            --warn: oklch(0.86 0.16 90);
+            --grid: rgba(53, 255, 158, 0.08);
+            --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html, body {
+            margin: 0;
+            height: 100%;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--ink);
+            font-family: var(--mono);
+            font-size: 0.9rem;
+            line-height: 1.5;
+            padding: 1.25rem;
+            display: grid;
+            gap: 1rem;
+            grid-template-rows: auto 1fr auto;
+            max-width: 60rem;
+            margin-inline: auto;
+        }
+
+        header {
+            display: flex;
+            align-items: baseline;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        h1 {
+            font-size: 1.05rem;
+            margin: 0;
+            color: var(--phos);
+            letter-spacing: 0.04em;
+        }
+
+        .sub {
+            color: var(--phos-dim);
+            font-size: 0.78rem;
+        }
+
+        .scope {
+            position: relative;
+            border: 1px solid var(--edge);
+            border-radius: 0.5rem;
+            background: repeating-linear-gradient(0deg, transparent 0, transparent calc(2.5rem - 1px), var(--grid) calc(2.5rem - 1px), var(--grid) 2.5rem),
+            repeating-linear-gradient(90deg, transparent 0, transparent calc(2.5rem - 1px), var(--grid) calc(2.5rem - 1px), var(--grid) 2.5rem),
+            var(--panel);
+            overflow: hidden;
+            min-height: 16rem;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        .panel {
+            display: grid;
+            gap: 0.85rem;
+            grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+            border: 1px solid var(--edge);
+            border-radius: 0.5rem;
+            padding: 0.9rem;
+            background: var(--panel);
+        }
+
+        fieldset {
+            border: 1px solid var(--edge);
+            border-radius: 0.4rem;
+            margin: 0;
+            padding: 0.6rem 0.7rem;
+        }
+
+        legend {
+            color: var(--phos-dim);
+            font-size: 0.7rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding-inline: 0.3rem;
+        }
+
+        .waves {
+            display: flex;
+            gap: 0.3rem;
+            flex-wrap: wrap;
+        }
+
+        button {
+            font-family: inherit;
+            font-size: 0.78rem;
+            color: var(--ink);
+            cursor: pointer;
+            background: transparent;
+            border: 1px solid var(--edge);
+            border-radius: 0.35rem;
+            padding: 0.35rem 0.6rem;
+            transition: border-color 0.15s, color 0.15s;
+        }
+
+        button.active {
+            border-color: var(--phos);
+            color: var(--phos);
+        }
+
+        @media (hover: hover) {
+            button:hover {
+                border-color: var(--phos-dim);
+            }
+        }
+
+        button:focus-visible {
+            outline: 2px solid var(--phos);
+            outline-offset: 2px;
+        }
+
+        label {
+            display: grid;
+            gap: 0.3rem;
+            font-size: 0.75rem;
+            color: var(--phos-dim);
+        }
+
+        label span b {
+            color: var(--ink);
+            font-weight: 400;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            accent-color: var(--phos);
+        }
+
+        .stats {
+            display: flex;
+            gap: 1.25rem;
+            flex-wrap: wrap;
+            font-size: 0.78rem;
+            color: var(--phos-dim);
+        }
+
+        .stats b {
+            color: var(--phos);
+            font-weight: 400;
+            font-variant-numeric: tabular-nums;
+        }
+
+        code {
+            color: var(--warn);
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                transition: none !important;
+            }
+        }
+    </style>
+</head>
+<body>
+<header>
+    <h1>lite-worker // SCOPE</h1>
+    <span class="sub">synthesis free-runs off-thread · frameChannel moves buffers, never copies · main draws the latest</span>
+</header>
+
+<div class="scope">
+    <canvas id="scope"></canvas>
+</div>
+
+<div class="panel">
+    <fieldset>
+        <legend>waveform</legend>
+        <div class="waves" id="waves">
+            <button data-wave="0" class="active">sine</button>
+            <button data-wave="1">square</button>
+            <button data-wave="2">saw</button>
+            <button data-wave="3">noise</button>
+        </div>
+    </fieldset>
+    <fieldset>
+        <legend>controls</legend>
+        <label>frequency <span><b id="freqOut"></b> cyc</span>
+            <input type="range" id="freq" min="1" max="16" step="1">
+        </label>
+        <label>amplitude <span><b id="ampOut"></b></span>
+            <input type="range" id="amp" min="10" max="100" step="1">
+        </label>
+    </fieldset>
+    <fieldset>
+        <legend>telemetry</legend>
+        <div class="stats">
+            <span>fps <b id="fps">—</b></span>
+            <span>frames <b id="frames">0</b></span>
+            <span>fresh/s <b id="fresh">—</b></span>
+            <span>dropped <b id="drops">0</b></span>
+        </div>
+    </fieldset>
+</div>
+
+<div class="sub">One pre-allocated pool of <code>Float32</code> buffers ping-pongs through <code>frameChannel</code>:
+    the worker free-runs the synth faster than the screen refreshes, so intermediate frames drop (latest-wins) and
+    memory stays flat. Serve with <code>npx serve .</code> and open <code>demos/oscilloscope.html</code>.
+</div>
+
+<script type="importmap">
+{ "imports": { "@zakkster/lite-worker": "../Worker.js" } }
+
+</script>
+<script type="module">
+    import {defineWorker} from "@zakkster/lite-worker";
+
+    // --- config (source of truth; UI hydrates from this at init) ---------------
+    const N = 1024;                 // samples per frame (power of two) = capacity, stride 1
+    const cfg = {w: 0, f: 4, a: 0.85};
+
+    // --- cached DOM refs (module-init, $-prefixed) -----------------------------
+    const $canvas = document.getElementById("scope");
+    const $ctx = $canvas.getContext("2d", {alpha: false});
+    const $waves = document.getElementById("waves");
+    const $freq = document.getElementById("freq");
+    const $amp = document.getElementById("amp");
+    const $freqOut = document.getElementById("freqOut");
+    const $ampOut = document.getElementById("ampOut");
+    const $fps = document.getElementById("fps");
+    const $frames = document.getElementById("frames");
+    const $fresh = document.getElementById("fresh");
+    const $drops = document.getElementById("drops");
+
+    // --- worker: waveform synthesis, fully self-contained ----------------------
+    // The worker is the PRODUCER: it free-runs the synth and publishes frames as
+    // fast as the buffer pool allows. Constants are inlined — a worker body cannot
+    // close over anything outside itself.
+    const sim = defineWorker((ctx) => {
+        const TAU = Math.PI * 2;
+        const N = 1024;
+        const ch = ctx.frameChannel(1, {role: "producer", capacity: N, count: 2});
+        let w = 0, f = 4, a = 0.85, phase = 0;
+        ctx.on("cfg", (c) => {
+            w = c.w;
+            f = c.f;
+            a = c.a;
+        });
+
+        function tick() {
+            // Wrap into [0, TAU) so phase never grows without bound.
+            phase = (phase + 0.06) % TAU;
+            // produce() fills a free buffer and transfers it; returns false when the
+            // pool is momentarily exhausted (frame dropped — latest-wins). The synth
+            // clock keeps advancing regardless.
+            ch.produce((s) => {
+                for (let i = 0; i < N; i++) {
+                    const t = (i / N) * TAU * f + phase;
+                    let v;
+                    if (w === 0) v = Math.sin(t);
+                    else if (w === 1) v = Math.sin(t) >= 0 ? 1 : -1;
+                    else if (w === 2) v = 2 * ((t / TAU) % 1) - 1;
+                    else v = Math.random() * 2 - 1;
+                    s[i] = v * a;
+                }
+            });
+            setTimeout(tick, 8); // ~125 Hz synth vs 60 Hz display -> steady latest-wins drops
+        }
+
+        tick();
+    }).spawn();
+
+    // --- main: the CONSUMER. Reads the freshest frame each rAF (alloc-free). ----
+    const scope = sim.frameChannel(1, {role: "consumer", capacity: N, count: 2});
+    sim.post("cfg", cfg);
+
+    // --- render (rAF; zero per-sample allocation) ------------------------------
+    let W = 0, H = 0, midY = 0, dpr = 1;
+
+    function resize() {
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const r = $canvas.getBoundingClientRect();
+        W = Math.max(1, r.width | 0);
+        H = Math.max(1, r.height | 0);
+        $canvas.width = (W * dpr) | 0;
+        $canvas.height = (H * dpr) | 0;
+        $ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        midY = H / 2;
+    }
+
+    window.addEventListener("resize", resize);
+    resize();
+
+    let frameCount = 0, emaDt = 16.7, lastT = performance.now(), lastStatT = lastT, freshCount = 0, lastFresh = 0;
+
+    function frame(now) {
+        const dt = now - lastT;
+        lastT = now;
+        emaDt += (dt - emaDt) * 0.1;
+
+        const hadNew = scope.hasNew;
+        const d = scope.read();       // Float32Array(N) latest, or null before first frame
+        if (hadNew) freshCount = (freshCount + 1) | 0;
+
+        // draw trace — clear + single stroked path. Cheap at this N/size. If this
+        // were pushed to much higher sample rates or canvas dimensions, the draw
+        // itself would become the bottleneck; the move then is to hand rendering off
+        // the CPU entirely — a WebGL line pass, or an OffscreenCanvas +
+        // ImageBitmapRenderingContext driven straight from the worker.
+        $ctx.fillStyle = "#08170f";
+        $ctx.fillRect(0, 0, W, H);
+        if (d) {
+            $ctx.lineWidth = 2;
+            $ctx.strokeStyle = "#35ff9e";
+            $ctx.beginPath();
+            const xs = W / (N - 1);
+            for (let i = 0; i < N; i++) {
+                const y = midY - d[i] * midY * 0.9;
+                if (i === 0) $ctx.moveTo(0, y); else $ctx.lineTo(i * xs, y);
+            }
+            $ctx.stroke();
+        }
+
+        // telemetry throttled to ~7.5 Hz via frame-counter mask
+        frameCount = (frameCount + 1) | 0;
+        if ((frameCount & 7) === 0) {
+            const dts = (now - lastStatT) / 1000;
+            $fps.textContent = (1000 / emaDt).toFixed(0);
+            $frames.textContent = frameCount;
+            $fresh.textContent = dts > 0 ? ((freshCount - lastFresh) / dts).toFixed(0) : "—";
+            $drops.textContent = scope.dropped.toLocaleString();
+            lastFresh = freshCount;
+            lastStatT = now;
+        }
+        requestAnimationFrame(frame);
+    }
+
+    requestAnimationFrame(frame);
+
+    // --- controls --------------------------------------------------------------
+    $waves.addEventListener("click", (e) => {
+        const btn = e.target.closest("button[data-wave]");
+        if (!btn) return;
+        for (const b of $waves.children) b.classList.toggle("active", b === btn);
+        cfg.w = btn.dataset.wave | 0;
+        sim.post("cfg", cfg);
+    });
+    $freq.addEventListener("input", () => {
+        cfg.f = $freq.value | 0;
+        $freqOut.textContent = cfg.f;
+        sim.post("cfg", cfg);
+    });
+    $amp.addEventListener("input", () => {
+        cfg.a = ($amp.value | 0) / 100;
+        $ampOut.textContent = cfg.a.toFixed(2);
+        sim.post("cfg", cfg);
+    });
+
+    // hydrate UI initial values from cfg (never hardcoded in HTML)
+    $freq.value = cfg.f;
+    $freqOut.textContent = cfg.f;
+    $amp.value = (cfg.a * 100) | 0;
+    $ampOut.textContent = cfg.a.toFixed(2);
+
+    window.addEventListener("pagehide", () => sim.destroy());
+</script>
+</body>
+</html>

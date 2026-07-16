@@ -1,0 +1,119 @@
+# @zakkster/lite-worker
+
+> Zero-GC per-frame Web Worker channel. Define a worker inline from a function,
+> message it with transferable ArrayBuffers, and keep the main thread clean at
+> 60fps. Zero dependencies, single file, full TypeScript types. It is NOT a
+> Comlink-style RPC proxy: the point is a clean main thread for rendering while a
+> simulation ticks off-thread, with nothing allocating in steady state. One
+> worker = one extra core; cross-core parallelism is deferred to lite-worker-pool
+> (v2.0.0). v1.1.0 adds frameChannel: a bounded, latest-wins frame channel over a
+> fixed transfer pool, with lite-gl LAYOUT-compatible strides.
+
+## Mental model
+
+There is ONE Worker with TWO transports, discriminated on receipt by a single
+`instanceof ArrayBuffer || ArrayBuffer.isView()` check (no allocation to route):
+
+- raw (zero-GC hot path): the ArrayBuffer *is* the message, no envelope. Moved
+  via transfer, never structured-cloned. Use for 60fps traffic (sim frames,
+  audio sample blocks, pixel buffers).
+- typed (control plane): `{t,i,d}` envelope. Use for init/config/request-response.
+  `call()` allocates a Promise + a pending-map entry, so it is NOT for per-frame use.
+
+## Core API (main thread)
+
+- `defineWorker(moduleFn, options?) -> WorkerHandle`
+  - `moduleFn(ctx)` is `.toString()`-serialized into a Blob URL. It MUST be
+    self-contained: it cannot close over module scope and cannot use bare `import`.
+  - `options`: `{ type?: "classic" | "module", name?: string, onError?: (e: Error) => void }`.
+    Default `type` is `"classic"` (widest Blob-worker support).
+  - The Worker is created lazily on `spawn()`. Also available as the default export.
+- `WorkerHandle`:
+  - `spawn(): this` — create the Worker. Idempotent while spawned; throws if destroyed.
+  - `send(buffer, transfer?)` — raw transfer. When `transfer` is omitted the buffer
+    is auto-transferred (it DETACHES on the sender). No-op before spawn / after terminate.
+  - `onRaw(fn) -> off`, `offRaw(fn)` — raw buffers coming back from the worker.
+  - `post(type, data?, transfer?)` — fire-and-forget typed message.
+  - `call(type, data?, { transfer?, timeout? }?) -> Promise` — request/response.
+    Rejects on handler throw, missing handler, timeout, or terminate. Allocates.
+  - `on(type, fn) -> off`, `off(type, fn)` — typed pushes from the worker.
+  - `terminate(): this` — stop the worker, reject pending calls; handle stays re-spawnable.
+  - `destroy()` — idempotent full teardown; handle becomes unusable afterwards.
+  - `spawned`, `destroyed` — booleans.
+
+## Worker-side context (`ctx`)
+
+Symmetric with the main side: `on(type, (data, reply?) => …)`, `off`, `onRaw`,
+`offRaw`, `post`, `send`, `close()`. For a `call`, either invoke
+`reply(data, transfer?)` OR return a value / resolving promise (auto-replies when
+`reply` was not called). Throwing rejects the caller's promise.
+
+## Ownership: the ping-pong
+
+`send(buf)` transfers, so `buf` is detached afterward — you no longer own it. The
+worker fills it and transfers it back to your `onRaw`. Hold TWO buffers and
+ping-pong them (one in flight, one being drawn/consumed) to keep both threads busy
+without allocating per frame.
+
+## frameChannel (v1.1.0) — bounded, latest-wins frame passing
+
+`frameChannel(transport, layout, options)`; also `handle.frameChannel(layout, options)`
+and worker-side `ctx.frameChannel(layout, options)`. A fixed pool of pre-allocated
+ArrayBuffers ping-pongs producer<->consumer via transfer: no per-frame data alloc,
+no clone, memory bounded by the pool. If the consumer falls behind, intermediate
+frames drop (latest-wins) instead of queueing.
+
+- `transport`: a WorkerHandle or worker `ctx` — anything with `{ send, onRaw }`.
+- `layout`: a Float32 stride number (needs `options.capacity`), `{ stride, capacity }`,
+  or `{ bytes }`. The stride form matches lite-gl `LAYOUT` (POINT 8, QUAD/LINE 9): a
+  channel of `{ stride, capacity }` holds a `Float32Array(capacity*stride)`, so a
+  projected instance field crosses the boundary unmodified (same `i*stride` indexing).
+- `options`: `{ role: "producer" | "consumer" (required), count?=2 (min 2, pool size),
+  capacity?, onFrame? }`.
+- Producer: `produce(fill) -> boolean` (fill(view, buffer); returns false when the
+  pool is momentarily empty = frame dropped, sim just advances), `free`, `dispose()`.
+- Consumer: `read() -> Float32Array | Uint8Array | null` (non-destructive, view cached
+  until the next swap so it is allocation-free per rAF), `hasNew`, `dropped`, `dispose()`.
+- Both expose `role`, `kind` ("f32"|"bytes"), `stride`, `capacity`, `byteLength`, `count`.
+- Wire protocol: direction carries meaning (no tag/envelope) — a raw buffer at the
+  consumer is a fresh frame; at the producer it is a recycle. So a frameChannel OWNS
+  the raw `send`/`onRaw` stream: don't also use them directly while it is live. The
+  typed `post`/`call`/`on` plane stays free for control.
+- Allocation floor: data is transferred (zero copy) and envelope-free; the only
+  hot-path cost is one typed-array header per buffer hop (transfer mints a new
+  ArrayBuffer identity each hop, so views can't cross the boundary cached). `read()`
+  itself allocates nothing. A SharedArrayBuffer-backed zero-header mode is planned
+  for v1.2.0 (needs COOP/COEP).
+
+## Constraints
+
+- Self-contained body: no capture of surrounding scope, no bare `import`. Pass
+  everything in via `post`/`send`, or inline it in the worker body.
+- CSP: Blob workers need `worker-src blob:` (or `child-src blob:` on older policies).
+- Transferables, not SharedArrayBuffer: the raw transport (and frameChannel, built
+  on it) uses transfer semantics and needs NO cross-origin isolation (no COOP/COEP).
+  Raw payloads must be an ArrayBuffer or an ArrayBuffer view. A SharedArrayBuffer
+  frameChannel mode is planned for v1.2.0.
+- No Blob URL leak: the object URL is revoked immediately after the Worker is
+  constructed (the script is already fetched by then), so short-lived workers do
+  not pile up object URLs. `destroy()` still frees the worker thread.
+
+## Do / don't
+
+- DO use `send`/`onRaw` for anything that runs every frame.
+- DO use `post`/`call`/`on` for setup, configuration, and occasional RPC.
+- DON'T use `call` inside a frame loop — it allocates.
+- DON'T reference outer variables inside `moduleFn` — serialization drops them.
+- DON'T reuse a buffer after `send()` — it has been transferred away.
+- DO use `frameChannel` instead of hand-rolling the ping-pong for per-frame data;
+  check `produce()`'s return (false = dropped) and drive `read()` from your rAF.
+- DON'T mix direct `send`/`onRaw` with a live `frameChannel` on the same transport.
+
+## Files
+
+- Worker.js — single-file ESM source (exports `defineWorker`, `frameChannel`, default export, `WorkerHandle`).
+- Worker.d.ts — full strict TypeScript declarations.
+- demos/oscilloscope.html — off-thread waveform synthesis dogfooding `frameChannel` (worker produces, main consumes, latest-wins).
+- bench/frame-soak.mjs — fast-producer/slow-consumer soak proving bounded memory + latest-wins (not shipped in the npm tarball).
+
+License: MIT © Zahary Shinikchiev
