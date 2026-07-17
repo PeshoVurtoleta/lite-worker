@@ -7,7 +7,8 @@
 > simulation ticks off-thread, with nothing allocating in steady state. One
 > worker = one extra core; cross-core parallelism is deferred to lite-worker-pool
 > (v2.0.0). v1.1.0 adds frameChannel: a bounded, latest-wins frame channel over a
-> fixed transfer pool, with lite-gl LAYOUT-compatible strides.
+> fixed transfer pool, with lite-gl LAYOUT-compatible strides. v1.2.0 adds
+> adoptCanvas: transferControlToOffscreen plus resize + visibility forwarding.
 
 ## Mental model
 
@@ -85,6 +86,30 @@ frames drop (latest-wins) instead of queueing.
   itself allocates nothing. A SharedArrayBuffer-backed zero-header mode is planned
   for v1.2.0 (needs COOP/COEP).
 
+## adoptCanvas (v1.2.0) — OffscreenCanvas with resize + visibility handled
+
+`handle.adoptCanvas(canvasEl, options?)` (main) transfers the canvas to the worker
+via transferControlToOffscreen and forwards the two things people forget: resize
+(a ResizeObserver posts device-pixel w/h + dpr) and visibility (visibilitychange
+posts pause/resume). Returns `{ resize(), pause(), resume(), dispose() }`. Throws
+if the canvas lacks transferControlToOffscreen. `options`: `{ maxDpr?=2 }`.
+
+`ctx.onCanvas(cb, options?)` (worker) receives it: `cb(canvas, ctl)` runs once with
+the OffscreenCanvas and a control `ctl`:
+- `ctl.canvas`, `ctl.width`, `ctl.height`, `ctl.dpr`, `ctl.visible`.
+- `ctl.onResize((w, h, dpr) => …)` — fired after canvas.width/height is applied.
+- `ctl.onVisibility((visible) => …)`.
+- `ctl.frame(fn, { fps?, interval? })` — a render loop that prefers requestAnimationFrame
+  (exposed on the worker global alongside OffscreenCanvas; vsync-paced), falling back
+  to a timer when it's absent or when a rate is given. AUTO-PAUSES when the owning tab
+  is hidden. `fn` gets a delta time (ms). Returns a stop fn.
+- `ctl.pause()`, `ctl.resume()`, `ctl.dispose()`.
+
+Uses reserved `lw:canvas*` typed message types (don't send those yourself). When
+the worker both produces and draws, frames never cross back — no frameChannel is
+involved; that is the point. frameChannel is for frames that must reach the main
+thread or another worker; adoptCanvas is for when the worker owns the pixels.
+
 ## Constraints
 
 - Self-contained body: no capture of surrounding scope, no bare `import`. Pass
@@ -111,9 +136,9 @@ frames drop (latest-wins) instead of queueing.
 
 ## Files
 
-- Worker.js — single-file ESM source (exports `defineWorker`, `frameChannel`, default export, `WorkerHandle`).
+- Worker.js — single-file ESM source (exports `defineWorker`, `frameChannel`, default export, `WorkerHandle`; methods `handle.frameChannel`, `handle.adoptCanvas`; worker-side `ctx.frameChannel`, `ctx.onCanvas`).
 - Worker.d.ts — full strict TypeScript declarations.
-- demos/oscilloscope.html — off-thread waveform synthesis dogfooding `frameChannel` (worker produces, main consumes, latest-wins).
+- demos/oscilloscope.html — off-thread waveform synthesis; tab 1 dogfoods `frameChannel` (worker produces, main draws, latest-wins), tab 2 dogfoods `adoptCanvas` (worker draws to a transferred canvas, main idle).
 - bench/frame-soak.mjs — fast-producer/slow-consumer soak proving bounded memory + latest-wins (not shipped in the npm tarball).
 
 License: MIT © Zahary Shinikchiev

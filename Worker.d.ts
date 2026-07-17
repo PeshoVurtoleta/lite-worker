@@ -75,6 +75,17 @@ export interface WorkerContext {
     options: FrameChannelOptions & { role: "consumer" }
   ): ConsumerFrameChannel;
 
+  /**
+   * Receive a canvas adopted from the main thread via
+   * {@link WorkerHandle.adoptCanvas}. The callback runs once, with the transferred
+   * OffscreenCanvas and a {@link CanvasControl} that surfaces forwarded resize and
+   * visibility and offers an auto-pausing render loop.
+   */
+  onCanvas(
+    cb: (canvas: OffscreenCanvas, control: CanvasControl) => void,
+    options?: CanvasFrameOptions
+  ): CanvasControl;
+
   /** Terminate this worker from the inside (`self.close()`). */
   close(): void;
 }
@@ -133,6 +144,15 @@ export declare class WorkerHandle {
     layout: FrameLayout,
     options: FrameChannelOptions & { role: "consumer" }
   ): ConsumerFrameChannel;
+
+  /**
+   * Hand a canvas to the worker via `transferControlToOffscreen()` and keep it in
+   * sync: a ResizeObserver forwards size changes (device pixels + dpr) and
+   * `visibilitychange` forwards tab visibility so the worker's render loop can
+   * auto-pause. Pair with {@link WorkerContext.onCanvas}. Throws if the canvas does
+   * not support `transferControlToOffscreen`.
+   */
+  adoptCanvas(canvasEl: HTMLCanvasElement, options?: AdoptCanvasOptions): CanvasAdoption;
 
   /**
    * Terminate the worker and reject all pending calls. The handle stays
@@ -240,6 +260,64 @@ export declare function frameChannel(
   layout: FrameLayout,
   options: FrameChannelOptions & { role: "consumer" }
 ): ConsumerFrameChannel;
+
+/** Options for {@link WorkerHandle.adoptCanvas}. */
+export interface AdoptCanvasOptions {
+  /** Clamp devicePixelRatio when sizing the transferred bitmap. Default 2. */
+  maxDpr?: number;
+}
+
+/** Main-side controller returned by {@link WorkerHandle.adoptCanvas}. */
+export interface CanvasAdoption {
+  /** Re-measure the canvas and forward its size to the worker. */
+  resize(): void;
+  /** Force the worker's render loop to pause. */
+  pause(): void;
+  /** Force the worker's render loop to resume. */
+  resume(): void;
+  /** Disconnect the ResizeObserver and remove the resize/visibility listeners. */
+  dispose(): void;
+}
+
+/** Options for a worker-side render loop ({@link CanvasControl.frame}, {@link WorkerContext.onCanvas}). */
+export interface CanvasFrameOptions {
+  /** Target frames per second. Overrides `interval`. */
+  fps?: number;
+  /** Millisecond interval between frames. Default ~16.7 (60fps). */
+  interval?: number;
+}
+
+/** Worker-side control handed to the {@link WorkerContext.onCanvas} callback. */
+export interface CanvasControl {
+  /** The transferred OffscreenCanvas. */
+  readonly canvas: OffscreenCanvas;
+  /** Current bitmap width in device pixels. */
+  readonly width: number;
+  /** Current bitmap height in device pixels. */
+  readonly height: number;
+  /** Current devicePixelRatio forwarded from the main thread. */
+  readonly dpr: number;
+  /** Whether the owning tab is currently visible. */
+  readonly visible: boolean;
+  /** Register a resize listener, fired after `canvas.width`/`height` is applied. Returns an off function. */
+  onResize(fn: (width: number, height: number, dpr: number) => void): () => void;
+  /** Register a visibility listener (true when the tab is visible). Returns an off function. */
+  onVisibility(fn: (visible: boolean) => void): () => void;
+  /**
+   * Start a render loop that auto-pauses when the owning tab is hidden. Prefers
+   * `requestAnimationFrame` (exposed on the worker global alongside OffscreenCanvas)
+   * for vsync pacing, falling back to a timer where it's absent or when `fps`/
+   * `interval` is given. The callback receives the delta time in ms. Returns a
+   * stop function.
+   */
+  frame(fn: (dt: number) => void, options?: CanvasFrameOptions): () => void;
+  /** Manually pause the render loop. */
+  pause(): void;
+  /** Manually resume the render loop. */
+  resume(): void;
+  /** Stop the loop and remove all listeners. */
+  dispose(): void;
+}
 
 /**
  * Create a worker from a self-contained module function. The function is

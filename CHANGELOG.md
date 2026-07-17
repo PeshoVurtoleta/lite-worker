@@ -5,6 +5,46 @@ All notable changes to `@zakkster/lite-worker` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-07-17
+
+### Added
+
+- `handle.adoptCanvas(canvasEl, options?)` — `transferControlToOffscreen()` plus
+  the two things that are easy to forget: **resize forwarding** (a `ResizeObserver`
+  on the main-thread element posts device-pixel dimensions + `dpr` to the worker)
+  and **visibility forwarding** (`visibilitychange` is posted so the worker's
+  render loop auto-pauses when the tab is hidden). Returns a controller with
+  `resize()`, `pause()`, `resume()`, and `dispose()`. Throws if the canvas does
+  not support `transferControlToOffscreen`.
+- `ctx.onCanvas(cb, options?)` — worker-side counterpart. The callback receives
+  the transferred `OffscreenCanvas` and a `CanvasControl` with `width`/`height`/
+  `dpr`/`visible`, `onResize()`, `onVisibility()`, and `frame(fn, { fps? })` — a
+  render loop that prefers `requestAnimationFrame` (exposed on the worker global
+  alongside OffscreenCanvas) for vsync pacing, falls back to a timer when it's
+  absent or when a rate is given, and auto-pauses when the owning tab is hidden.
+  The callback receives a delta time in ms.
+- Reserved `lw:canvas*` typed message types carry the adoption protocol. Like
+  `frameChannel`, the worker-side implementation is serialized from the single
+  main-side definition, so the two sides share one source of truth.
+- Types: `AdoptCanvasOptions`, `CanvasAdoption`, `CanvasControl`, `CanvasFrameOptions`.
+- Tests: adoptCanvas/onCanvas protocol (adoption dims, resize + visibility
+  forwarding, the render loop over both the rAF and timer paths), and a
+  spawn/destroy leak gate asserting no orphaned Blob URLs across 50 cycles.
+
+### Fixed
+
+- A worker error (a load/parse failure or an uncaught error) now rejects all
+  in-flight `call()` promises immediately instead of letting them hang until
+  their timeout. Handler-level throws during a call are still replied to
+  individually.
+
+### Changed
+
+- The oscilloscope demo's OffscreenCanvas scene now uses `adoptCanvas`/`onCanvas`
+  instead of hand-rolled canvas transfer, resize, and visibility wiring, and its
+  synth advances phase by real elapsed time (delta-time) so the waveform's
+  frequency is correct regardless of timer jitter or a backgrounded tab.
+
 ## [1.1.0] - 2026-07-16
 
 ### Added
@@ -74,5 +114,6 @@ Initial release — the inline worker core.
 - Phosphor oscilloscope demo: off-thread waveform synthesis with double-buffered
   transferable ping-pong and a zero-allocation render loop.
 
+[1.2.0]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.2.0
 [1.1.0]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.1.0
 [1.0.0]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.0.0

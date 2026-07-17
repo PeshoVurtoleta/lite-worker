@@ -263,13 +263,116 @@ function makeFrameChannel(transport, layout, options) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Worker-side canvas control. Serialized into the runtime via .toString(), so it
+// MUST be self-contained: only its arguments and worker globals (setTimeout,
+// clearTimeout, performance). Paired with the main-side WorkerHandle.adoptCanvas,
+// which owns transferControlToOffscreen + resize/visibility forwarding.
+//
+// Protocol (reserved "lw:canvas*" typed messages, main -> worker):
+//   lw:canvas       { canvas, w, h, dpr }  first adoption (canvas is transferred)
+//   lw:canvas:size  { w, h, dpr }          a resize (canvas.width/height applied)
+//   lw:canvas:vis   { visible }            tab visibility (pauses/resumes frame())
+// ---------------------------------------------------------------------------
+function makeCanvasControl(ctx, cb, options) {
+  var opt = options || {};
+  var canvas = null, dpr = 1, visible = true, adopted = false;
+  var resizeCbs = [], visCbs = [];
+  var loopFn = null;
+  var loopInterval = opt.fps ? (1000 / opt.fps) : (opt.interval || (1000 / 60));
+  var loopUseRaf = false, loopHandle = 0, loopIsRaf = false, loopLast = 0, loopStopped = true;
+  var now = function () { return typeof performance !== "undefined" ? performance.now() : Date.now(); };
+  // Modern browsers expose requestAnimationFrame on the worker global alongside
+  // OffscreenCanvas, which is vsync-paced and self-throttles when hidden. Prefer
+  // it; fall back to setTimeout where it's absent or when an explicit rate is set.
+  var raf = (typeof requestAnimationFrame === "function") ? requestAnimationFrame : null;
+  var caf = (typeof cancelAnimationFrame === "function") ? cancelAnimationFrame : null;
+
+  function step(ts) {
+    loopHandle = 0;
+    if (loopStopped || !visible || !loopFn) return;
+    var t = (loopIsRaf && typeof ts === "number") ? ts : now();
+    var dt = t - loopLast; loopLast = t;
+    loopFn(dt);
+    schedule();
+  }
+  function schedule() {
+    if (loopStopped || !visible || !loopFn || loopHandle) return;
+    if (loopUseRaf) { loopIsRaf = true; loopHandle = raf(step); }
+    else { loopIsRaf = false; loopHandle = setTimeout(step, loopInterval); }
+  }
+  function resumeLoop() {
+    if (loopStopped || !visible || !loopFn || loopHandle) return;
+    loopLast = now();
+    schedule();
+  }
+  function pauseLoop() {
+    if (!loopHandle) return;
+    if (loopIsRaf) { if (caf) caf(loopHandle); } else { clearTimeout(loopHandle); }
+    loopHandle = 0;
+  }
+
+  var ctl = {
+    get canvas() { return canvas; },
+    get width() { return canvas ? canvas.width : 0; },
+    get height() { return canvas ? canvas.height : 0; },
+    get dpr() { return dpr; },
+    get visible() { return visible; },
+    // Register a resize listener. Fired after canvas.width/height is applied.
+    onResize: function (fn) { resizeCbs.push(fn); return function () { var i = resizeCbs.indexOf(fn); if (i >= 0) resizeCbs.splice(i, 1); }; },
+    // Register a visibility listener (true when the owning tab is visible).
+    onVisibility: function (fn) { visCbs.push(fn); return function () { var i = visCbs.indexOf(fn); if (i >= 0) visCbs.splice(i, 1); }; },
+    // Start a render loop that auto-pauses when the tab is hidden (workers have
+    // no requestAnimationFrame, so this is timer-driven). Returns a stop function.
+    frame: function (fn, o) {
+      loopFn = fn;
+      var wantRate = !!(o && (o.fps || o.interval));
+      if (o && o.fps) loopInterval = 1000 / o.fps; else if (o && o.interval) loopInterval = o.interval;
+      // rAF for smooth vsync pacing, unless the caller asked for a specific rate.
+      loopUseRaf = !wantRate && !!raf;
+      loopStopped = false;
+      resumeLoop();
+      return function () { loopStopped = true; pauseLoop(); loopFn = null; };
+    },
+    pause: function () { visible = false; pauseLoop(); },
+    resume: function () { visible = true; resumeLoop(); }
+  };
+
+  var offCanvas = ctx.on("lw:canvas", function (d) {
+    canvas = d.canvas; dpr = d.dpr || 1;
+    canvas.width = d.w; canvas.height = d.h;
+    if (!adopted) { adopted = true; cb(canvas, ctl); }
+  });
+  var offSize = ctx.on("lw:canvas:size", function (d) {
+    if (!canvas) return;
+    dpr = d.dpr || dpr;
+    canvas.width = d.w; canvas.height = d.h;
+    for (var i = 0; i < resizeCbs.length; i++) resizeCbs[i](canvas.width, canvas.height, dpr);
+  });
+  var offVis = ctx.on("lw:canvas:vis", function (d) {
+    visible = !!d.visible;
+    if (visible) resumeLoop(); else pauseLoop();
+    for (var i = 0; i < visCbs.length; i++) visCbs[i](visible);
+  });
+
+  ctl.dispose = function () {
+    loopStopped = true; pauseLoop(); loopFn = null;
+    offCanvas(); offSize(); offVis();
+    resizeCbs.length = 0; visCbs.length = 0;
+  };
+  return ctl;
+}
+
 function buildSource(moduleFn) {
   const body = moduleFn.toString();
-  // Inject frameChannel into the worker from the single main-side definition, so
-  // there is exactly one implementation and no drift between the two sides.
+  // Inject frameChannel and the canvas control into the worker from the single
+  // main-side definitions, so there is exactly one implementation of each and no
+  // drift between the two sides.
   const frame =
     "\nvar __makeFrameChannel = (" + makeFrameChannel.toString() + ");\n" +
-    "__ctx.frameChannel = function (l, o) { return __makeFrameChannel(__ctx, l, o); };\n";
+    "__ctx.frameChannel = function (l, o) { return __makeFrameChannel(__ctx, l, o); };\n" +
+    "\nvar __makeCanvasControl = (" + makeCanvasControl.toString() + ");\n" +
+    "__ctx.onCanvas = function (cb, o) { return __makeCanvasControl(__ctx, cb, o); };\n";
   // ;( ... )(__ctx) invokes the user module fn with the worker channel.
   return WORKER_RUNTIME + frame + "\n;(" + body + ")(__ctx);\n";
 }
@@ -407,6 +510,51 @@ class WorkerHandle {
     return makeFrameChannel(this, layout, options);
   }
 
+  // Hand a canvas to the worker via transferControlToOffscreen and keep it in
+  // sync: a ResizeObserver forwards size changes (in device pixels, with dpr),
+  // and visibilitychange forwards tab visibility so the worker's render loop can
+  // auto-pause when hidden. Pair with ctx.onCanvas(cb) in the worker. Returns a
+  // controller with { resize(), pause(), resume(), dispose() }.
+  adoptCanvas(canvasEl, options) {
+    if (!canvasEl || typeof canvasEl.transferControlToOffscreen !== "function") {
+      throw new Error("lite-worker: adoptCanvas needs a canvas supporting transferControlToOffscreen()");
+    }
+    const opt = options || {};
+    const maxDpr = opt.maxDpr || 2;
+    const hasWin = typeof window !== "undefined";
+    const hasDoc = typeof document !== "undefined";
+    const dims = () => {
+      const dpr = Math.min((hasWin && window.devicePixelRatio) || 1, maxDpr);
+      const r = canvasEl.getBoundingClientRect();
+      return { w: Math.max(1, (r.width * dpr) | 0), h: Math.max(1, (r.height * dpr) | 0), dpr };
+    };
+
+    const off = canvasEl.transferControlToOffscreen();
+    const d0 = dims();
+    off.width = d0.w; off.height = d0.h;
+    this.post("lw:canvas", { canvas: off, w: d0.w, h: d0.h, dpr: d0.dpr }, [off]);
+
+    const pushSize = () => { const d = dims(); this.post("lw:canvas:size", d); };
+    const pushVis = () => this.post("lw:canvas:vis", { visible: !(hasDoc && document.hidden) });
+
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined") { ro = new ResizeObserver(pushSize); ro.observe(canvasEl); }
+    if (hasWin) window.addEventListener("resize", pushSize);
+    if (hasDoc) document.addEventListener("visibilitychange", pushVis);
+    pushVis(); // initial visibility
+
+    return {
+      resize: pushSize,
+      pause: () => this.post("lw:canvas:vis", { visible: false }),
+      resume: () => this.post("lw:canvas:vis", { visible: true }),
+      dispose: () => {
+        if (ro) ro.disconnect();
+        if (hasWin) window.removeEventListener("resize", pushSize);
+        if (hasDoc) document.removeEventListener("visibilitychange", pushVis);
+      }
+    };
+  }
+
   // --- lifecycle -----------------------------------------------------------
 
   terminate() {
@@ -472,6 +620,14 @@ class WorkerHandle {
     if (this._onError) this._onError(err);
     const s = this._h.get("error");
     if (s) s.forEach((fn) => fn(err));
+    // A worker error (a load/parse failure, or an uncaught error) will never
+    // reply to an in-flight call — reject them now rather than let them hang to
+    // their timeout. Handler-level throws during a call are replied to
+    // individually and don't reach here, so this only catches genuine failures.
+    if (this._pending.size) {
+      this._pending.forEach((p) => { if (p.timer) clearTimeout(p.timer); p.reject(err); });
+      this._pending.clear();
+    }
   }
 }
 

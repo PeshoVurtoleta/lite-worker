@@ -1,6 +1,6 @@
 {
   "name": "@zakkster/lite-worker",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Zero-GC per-frame worker channel. Define a worker inline from a function, message it with transferables, keep the main thread clean at 60fps. Zero dependencies, single file.",
   "type": "module",
   "main": "./Worker.js",
@@ -17,13 +17,14 @@
   "files": [
     "Worker.js",
     "Worker.d.ts",
-    "CHANGELOG.md",
     "llms.txt",
+    "CHANGELOG.md",
     "README.md"
   ],
   "sideEffects": false,
   "scripts": {
     "test": "node test/Worker.test.js",
+    "bench": " node --expose-gc bench/frame-soak.mjs",
     "check": "node --check Worker.js && tsc --noEmit --strict Worker.d.ts"
   },
   "keywords": [
@@ -40,6 +41,8 @@
     "double-buffer",
     "backpressure",
     "latest-wins",
+    "offscreencanvas",
+    "transfercontroltooffscreen",
     "esm",
     "single-file",
     "lite"

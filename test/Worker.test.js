@@ -283,6 +283,116 @@ function pair() {
   ok("dispose() is idempotent", (() => { p.dispose(); c.dispose(); return true; })());
 }
 
+// --- 21. adoptCanvas + ctx.onCanvas (protocol over the loopback) -----------
+{
+  // minimal DOM stubs for the main side
+  globalThis.window = globalThis.window || { devicePixelRatio: 2, addEventListener() {}, removeEventListener() {} };
+  globalThis.document = globalThis.document || { hidden: false, addEventListener() {}, removeEventListener() {} };
+  globalThis.ResizeObserver = globalThis.ResizeObserver || class { constructor(fn) { this.fn = fn; } observe() {} disconnect() { this.disconnected = true; } };
+
+  const h = defineWorker((ctx) => {
+    ctx.onCanvas((canvas, ctl) => {
+      ctx.post("adopted", { w: canvas.width, h: canvas.height, dpr: ctl.dpr, hasFrame: typeof ctl.frame === "function", visible: ctl.visible });
+      ctl.onResize((cw, ch, dpr) => ctx.post("resized", { cw, ch, dpr }));
+      ctl.onVisibility((v) => ctx.post("vis", { v }));
+      ctl.frame(() => ctx.post("drew", {}), { fps: 120 });
+    });
+  }).spawn();
+
+  const got = {}; let drew = 0;
+  h.on("adopted", (d) => (got.adopted = d));
+  h.on("resized", (d) => (got.resized = d));
+  h.on("vis", (d) => (got.vis = d));
+  h.on("drew", () => drew++);
+
+  ok("adoptCanvas throws without transferControlToOffscreen",
+    await throws(() => h.adoptCanvas({}), "transferControlToOffscreen"));
+
+  const fakeCanvas = {
+    width: 0, height: 0,
+    getBoundingClientRect: () => ({ width: 300, height: 150 }),
+    transferControlToOffscreen: () => ({ width: 0, height: 0 })
+  };
+  const adoption = h.adoptCanvas(fakeCanvas);
+  await tick();
+  ok("onCanvas receives device dims (dpr applied)", got.adopted && got.adopted.w === 600 && got.adopted.h === 300);
+  ok("ctl exposes dpr + frame + visible", got.adopted && got.adopted.dpr === 2 && got.adopted.hasFrame && got.adopted.visible === true);
+
+  adoption.resize(); await tick();
+  ok("resize is forwarded to the worker", got.resized && got.resized.cw === 600 && got.resized.dpr === 2);
+
+  adoption.pause(); await tick();
+  ok("pause forwards visibility=false", got.vis && got.vis.v === false);
+  adoption.resume(); await tick();
+  ok("resume forwards visibility=true", got.vis && got.vis.v === true);
+
+  await new Promise((r) => setTimeout(r, 50)); // let the ~120fps worker timer fire
+  ok("frame() render loop fires (timer-driven, auto-paused when hidden)", drew > 0);
+
+  adoption.dispose();
+  ok("adoption.dispose() does not throw", true);
+  h.destroy();
+}
+
+// --- 22. spawn/destroy leak gate: no orphaned Blob URLs --------------------
+{
+  const before = sources.size;
+  for (let i = 0; i < 50; i++) {
+    const h = defineWorker((ctx) => { ctx.on("noop", () => {}); });
+    h.spawn();
+    h.terminate();
+    h.destroy();
+  }
+  ok("no Blob URLs retained across 50 spawn/destroy cycles", sources.size === before);
+  const h = defineWorker(() => {}).spawn();
+  ok("spawned worker holds no lingering object URL (revoked on construction)", sources.size === before);
+  h.destroy();
+  ok("destroy() marks the handle destroyed", h.destroyed === true);
+}
+
+// --- 23. worker error rejects in-flight calls (no hang to timeout) ---------
+{
+  const h = defineWorker((ctx) => {
+    ctx.on("hang", () => new Promise(() => {})); // never resolves
+  }).spawn();
+  const p = h.call("hang", null, { timeout: 60000 }); // long timeout; must NOT wait for it
+  await tick();
+  // simulate a worker load/parse/uncaught failure
+  h._worker.onerror({ message: "simulated worker failure" });
+  let rejected = false, msg = "";
+  try { await p; } catch (e) { rejected = true; msg = e.message; }
+  ok("worker error rejects the pending call immediately", rejected && /simulated worker failure/.test(msg));
+  ok("pending map cleared after error", h._pending.size === 0);
+  h.destroy();
+}
+
+// --- 24. render loop prefers requestAnimationFrame when available ----------
+{
+  let rafCalls = 0;
+  const savedRaf = globalThis.requestAnimationFrame;
+  const savedCaf = globalThis.cancelAnimationFrame;
+  globalThis.requestAnimationFrame = (fn) => { rafCalls++; return setTimeout(() => fn(performance.now()), 8); };
+  globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
+  try {
+    const h = defineWorker((ctx) => {
+      ctx.onCanvas((canvas, ctl) => {
+        ctl.frame(() => ctx.post("rf", {})); // no fps -> should take the rAF path
+      });
+    }).spawn();
+    let drew = 0;
+    h.on("rf", () => drew++);
+    const fake = { width: 0, height: 0, getBoundingClientRect: () => ({ width: 10, height: 10 }), transferControlToOffscreen: () => ({ width: 0, height: 0 }) };
+    const adoption = h.adoptCanvas(fake);
+    await new Promise((r) => setTimeout(r, 60));
+    ok("frame() without an explicit rate uses requestAnimationFrame", rafCalls > 0);
+    ok("rAF-driven loop actually renders", drew > 0);
+    adoption.dispose(); h.destroy();
+  } finally {
+    globalThis.requestAnimationFrame = savedRaf;
+    globalThis.cancelAnimationFrame = savedCaf;
+  }
+}
+
 console.log(results.join("\n"));
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
