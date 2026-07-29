@@ -186,16 +186,30 @@ export type FrameLayout =
 export interface FrameChannelOptions {
   /** Which half this endpoint is. Required. */
   role: "producer" | "consumer";
-  /** Pool size — the number of buffers that ping-pong. Default 2, minimum 2. */
+  /**
+   * Transport for the frames.
+   *  - `"auto"` (default) — use the SharedArrayBuffer fast path when it's
+   *    available (cross-origin isolated, and the transport has `post`/`on`),
+   *    otherwise fall back to the transferable ring transparently.
+   *  - `"shared"` (alias `"sab"`) — require the shared path; throws when it
+   *    isn't available rather than silently degrading.
+   *  - `"transfer"` — always use the transferable ring.
+   */
+  mode?: "auto" | "shared" | "sab" | "transfer";
+  /** Pool size — the number of buffers that ping-pong (or shared slots). Default 2, minimum 2. */
   count?: number;
   /** Instance capacity, required when `layout` is a bare stride number. */
   capacity?: number;
-  /** Consumer-only: called with the view each time a new frame swaps in. */
+  /** Consumer-only, transferable mode: called with the view each time a new frame swaps in. */
   onFrame?: (view: Float32Array | Uint8Array, buffer: ArrayBuffer) => void;
 }
 
 interface FrameChannelBase {
   readonly role: "producer" | "consumer";
+  /** Which transport this endpoint settled on. */
+  readonly mode: "shared" | "transfer";
+  /** True when running on the SharedArrayBuffer fast path. */
+  readonly shared: boolean;
   /** `"f32"` for stride layouts, `"bytes"` for `{ bytes }` layouts. */
   readonly kind: "f32" | "bytes";
   /** Float stride (0 for a `{ bytes }` layout). */
@@ -214,14 +228,17 @@ interface FrameChannelBase {
 export interface ProducerFrameChannel extends FrameChannelBase {
   readonly role: "producer";
   /**
-   * Fill the next free buffer via `fill(view, buffer)` and transfer it to the
-   * consumer. Returns `false` when no buffer is free — the frame is dropped
-   * (latest-wins) and your loop should simply advance to the next tick. The
-   * channel never queues unboundedly.
+   * Fill the next free buffer via `fill(view, buffer)` and publish it. In
+   * transferable mode this transfers the buffer and returns `false` when no
+   * buffer is free — the frame is dropped (latest-wins) and your loop advances.
+   * In shared mode the writer always has a slot, so it returns `true` and an
+   * unread frame is simply superseded in place. Either way nothing queues.
    */
-  produce(fill: (view: Float32Array | Uint8Array, buffer: ArrayBuffer) => void): boolean;
-  /** Buffers currently free to write. */
+  produce(fill: (view: Float32Array | Uint8Array, buffer: ArrayBuffer | SharedArrayBuffer) => void): boolean;
+  /** Buffers currently free to write (always `count` in shared mode). */
   readonly free: number;
+  /** Shared mode only: total frames published. */
+  readonly published?: number;
 }
 
 /** Consumer half: reads the freshest frame. */
@@ -229,14 +246,26 @@ export interface ConsumerFrameChannel extends FrameChannelBase {
   readonly role: "consumer";
   /**
    * The freshest frame's view, or `null` before the first frame arrives.
-   * Non-destructive and allocation-free — the view is cached until the next frame
-   * swaps in — so it is safe to call every animation frame.
+   * Non-destructive and allocation-free — views are cached (one per slot in
+   * shared mode, one per buffer in transferable mode) — so it is safe to call
+   * every animation frame. In shared mode the returned view aliases live shared
+   * memory: consume it immediately, or use {@link ConsumerFrameChannel.readInto}
+   * for a snapshot that cannot change underneath you.
    */
   read(): Float32Array | Uint8Array | null;
+  /**
+   * Copy the freshest frame into `dst`, re-checking the seqlock so a publish
+   * that lands mid-copy is retried. Returns `false` if nothing has been
+   * published yet or the retries were exhausted. Use when the data outlives the
+   * read; {@link ConsumerFrameChannel.read} is the fast path.
+   */
+  readInto(dst: Float32Array | Uint8Array): boolean;
   /** True when a frame has arrived that has not yet been read. */
   readonly hasNew: boolean;
   /** Count of frames superseded before they were read (dropped, latest-wins). */
   readonly dropped: number;
+  /** Shared mode only: reads that raced an in-flight publish and retried. */
+  readonly torn: number;
 }
 
 export type FrameChannel = ProducerFrameChannel | ConsumerFrameChannel;

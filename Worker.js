@@ -175,14 +175,96 @@ function makeFrameChannel(transport, layout, options) {
     throw new Error("lite-worker: frameChannel(layout) must be a stride number, {stride,capacity}, or {bytes}");
   }
 
-  function makeView(buf) {
-    return kind === "bytes" ? new Uint8Array(buf) : new Float32Array(buf);
+  function makeView(buf, byteOffset) {
+    return kind === "bytes"
+      ? new Uint8Array(buf, byteOffset || 0, byteLength)
+      : new Float32Array(buf, byteOffset || 0, byteLength >> 2);
+  }
+
+  // --- mode: "auto" (default) | "shared" (SAB; alias "sab") | "transfer" ----
+  // The shared path needs SharedArrayBuffer, which browsers gate behind
+  // cross-origin isolation (COOP/COEP). `crossOriginIsolated` is a boolean in
+  // browsers and undefined in Node, so a non-boolean means "no COI concept
+  // here, allow it"; an explicit false means the page didn't opt in.
+  var wanted = opts.mode || "auto";
+  if (wanted === "sab") wanted = "shared";
+  if (wanted !== "auto" && wanted !== "shared" && wanted !== "transfer") {
+    throw new Error("lite-worker: frameChannel options.mode must be 'auto', 'shared', or 'transfer'");
+  }
+  var coi = (typeof crossOriginIsolated === "boolean") ? crossOriginIsolated : true;
+  var canShare = typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "undefined" && coi;
+  // The handshake that hands the SAB across rides the typed plane, so a bare
+  // { send, onRaw } transport can't negotiate one.
+  var canTalk = typeof transport.post === "function" && typeof transport.on === "function";
+  if (wanted === "shared" && !canShare) {
+    throw new Error(
+      "lite-worker: frameChannel mode 'shared' needs SharedArrayBuffer" +
+      (typeof SharedArrayBuffer === "undefined" ? " (unavailable here)" : " under cross-origin isolation (COOP/COEP)")
+    );
+  }
+  if (wanted === "shared" && !canTalk) {
+    throw new Error("lite-worker: frameChannel mode 'shared' needs a transport with post()/on() to hand over the buffer");
+  }
+  var useShared = wanted !== "transfer" && canShare && canTalk;
+
+  // Shared-memory layout: a 4-slot Int32 header followed by `count` frame slots.
+  //   [0] SEQ    seqlock — even = stable, odd = a publish is in progress
+  //   [1] PUB    index of the slot holding the newest published frame
+  //   [2] FRAMES total frames published (lets a consumer spot missed frames)
+  //   [3] reserved
+  var HDR_I32 = 4, HDR_BYTES = 16, SEQ = 0, PUB = 1, FRAMES = 2;
+  var hdr = null, slots = null, sab = null;
+
+  function attachShared(buffer) {
+    sab = buffer;
+    hdr = new Int32Array(buffer, 0, HDR_I32);
+    slots = [];
+    for (var s = 0; s < count; s++) slots.push(makeView(buffer, HDR_BYTES + s * byteLength));
   }
 
   var disposed = false;
   var off = null;
 
   if (role === "producer") {
+    if (useShared) {
+      // Allocate the shared region and hand it across once. After this there is
+      // ZERO postMessage traffic on the data path: publishing is three atomics.
+      attachShared(new SharedArrayBuffer(HDR_BYTES + count * byteLength));
+      var meta = { sab: sab, stride: stride, capacity: capacity, kind: kind, count: count, byteLength: byteLength };
+      transport.post("lw:fc:sab", meta);
+      // A consumer built after this point missed the handshake; it announces
+      // itself and we re-send, so construction order doesn't matter.
+      var offHello = transport.on("lw:fc:hello", function () {
+        if (!disposed) transport.post("lw:fc:sab", meta);
+      });
+
+      return {
+        role: "producer", mode: "shared", shared: true,
+        kind: kind, stride: stride, capacity: capacity, byteLength: byteLength, count: count,
+        // Write the next slot and publish it with a seqlock: bump SEQ odd,
+        // swing PUB, bump SEQ even. A reader that observes an odd SEQ or a
+        // changed SEQ knows it raced and retries.
+        produce: function (fill) {
+          if (disposed) return false;
+          var w = (Atomics.load(hdr, PUB) + 1) % count;
+          fill(slots[w], sab);
+          Atomics.add(hdr, SEQ, 1);      // -> odd: publish in progress
+          Atomics.store(hdr, PUB, w);
+          Atomics.add(hdr, SEQ, 1);      // -> even: stable
+          Atomics.add(hdr, FRAMES, 1);
+          return true;                    // shared mode never starves
+        },
+        get free() { return count; },
+        get published() { return hdr ? Atomics.load(hdr, FRAMES) : 0; },
+        dispose: function () {
+          if (disposed) return;
+          disposed = true;
+          offHello();
+          hdr = null; slots = null; sab = null;
+        }
+      };
+    }
+
     // The producer owns every buffer to begin with; they flow to the consumer
     // and cycle back. `free` = buffers currently owned and writable.
     var free = [];
@@ -195,7 +277,7 @@ function makeFrameChannel(transport, layout, options) {
     });
 
     return {
-      role: "producer",
+      role: "producer", mode: "transfer", shared: false,
       kind: kind, stride: stride, capacity: capacity, byteLength: byteLength, count: count,
       // Fill the next free buffer via fill(view, buffer) and transfer it to the
       // consumer. Returns false when no buffer is free — the frame is dropped and
@@ -225,9 +307,26 @@ function makeFrameChannel(transport, layout, options) {
   var readSinceSwap = true;
   var dropped = 0;
   var onFrame = typeof opts.onFrame === "function" ? opts.onFrame : null;
+  var lastFrame = -1;        // shared mode: last FRAMES counter observed
+  var torn = 0;              // shared mode: reads that lost the seqlock race
+
+  // A consumer always starts on the transferable path and upgrades in place if
+  // the producer hands over a SharedArrayBuffer, so neither side has to agree
+  // up front and construction order doesn't matter.
+  var offSab = null;
+  if (wanted !== "transfer" && canTalk) {
+    offSab = transport.on("lw:fc:sab", function (m) {
+      if (disposed || hdr || !m || !m.sab) return;
+      if (m.byteLength !== byteLength || (m.count | 0) !== count) return; // layout mismatch: stay on transfer
+      attachShared(m.sab);
+      if (off) { off(); off = null; }   // the raw path is no longer used
+      display = null; view = null;
+    });
+    transport.post("lw:fc:hello", null); // in case the producer already sent it
+  }
 
   off = transport.onRaw(function (buf) {
-    if (disposed) return;
+    if (disposed || hdr) return;
     var ab = buf instanceof ArrayBuffer ? buf : (buf && buf.buffer) || null;
     if (!ab || ab.byteLength !== byteLength) return;
     if (display !== null) {
@@ -242,23 +341,68 @@ function makeFrameChannel(transport, layout, options) {
 
   return {
     role: "consumer",
+    get mode() { return hdr ? "shared" : "transfer"; },
+    get shared() { return !!hdr; },
     kind: kind, stride: stride, capacity: capacity, byteLength: byteLength, count: count,
     // Non-destructive read of the freshest frame, or null before the first one.
-    // Safe to call every rAF and allocates nothing (the view is cached until the
-    // next frame swaps in).
+    // Safe to call every rAF and allocates nothing (views are cached: one per
+    // slot in shared mode, one per buffer in transfer mode).
     read: function () {
+      if (hdr) {
+        // Seqlock acquire: an odd SEQ means a publish is mid-flight, so take the
+        // previous stable slot rather than a half-swung pointer.
+        var s0 = Atomics.load(hdr, SEQ);
+        if (s0 & 1) { torn++; s0 = Atomics.load(hdr, SEQ); }
+        var f = Atomics.load(hdr, FRAMES);
+        if (f === 0) return null;
+        if (lastFrame >= 0 && f > lastFrame + 1) dropped += f - lastFrame - 1;
+        lastFrame = f;
+        return slots[Atomics.load(hdr, PUB)];
+      }
       if (display === null) return null;
       readSinceSwap = true;
       return view;
     },
-    get hasNew() { return display !== null && !readSinceSwap; },
+    // Tear-free snapshot: copies the newest frame into `dst` and re-checks the
+    // seqlock, retrying if the producer published mid-copy. Use this when the
+    // consumer holds the data across a yield; read() is the fast path for a
+    // renderer that consumes it immediately. Returns false if nothing is
+    // published yet or the retries were exhausted.
+    readInto: function (dst) {
+      if (!hdr) {
+        if (display === null) return false;
+        dst.set(view); readSinceSwap = true; return true;
+      }
+      for (var attempt = 0; attempt < 4; attempt++) {
+        var s0 = Atomics.load(hdr, SEQ);
+        if (s0 & 1) continue;                       // publish in progress
+        var f = Atomics.load(hdr, FRAMES);
+        if (f === 0) return false;
+        dst.set(slots[Atomics.load(hdr, PUB)]);
+        if (Atomics.load(hdr, SEQ) === s0) {        // nothing published mid-copy
+          if (lastFrame >= 0 && f > lastFrame + 1) dropped += f - lastFrame - 1;
+          lastFrame = f;
+          return true;
+        }
+        torn++;
+      }
+      return false;
+    },
+    get hasNew() {
+      if (hdr) return Atomics.load(hdr, FRAMES) > (lastFrame < 0 ? 0 : lastFrame);
+      return display !== null && !readSinceSwap;
+    },
     get dropped() { return dropped; },
+    /** Shared mode only: reads that raced an in-flight publish and retried. */
+    get torn() { return torn; },
     dispose: function () {
       if (disposed) return;
       disposed = true;
       if (off) off();
+      if (offSab) offSab();
       display = null;
       view = null;
+      hdr = null; slots = null; sab = null;
     }
   };
 }

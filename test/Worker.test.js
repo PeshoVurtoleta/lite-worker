@@ -67,6 +67,21 @@ function pair() {
   const a = mk(), b = mk(); a.other = b; b.other = a; return [a, b];
 }
 
+// Like pair(), but also carrying the typed plane (post/on) that the SAB
+// handshake needs to negotiate shared mode.
+function pairTyped() {
+  const mk = () => ({
+    _r: new Set(), _t: new Map(), other: null,
+    onRaw(fn) { this._r.add(fn); return () => this._r.delete(fn); },
+    send(buf) { const o = this.other; queueMicrotask(() => o._r.forEach((f) => f(buf))); },
+    on(type, fn) { let s = this._t.get(type); if (!s) { s = new Set(); this._t.set(type, s); } s.add(fn); return () => s.delete(fn); },
+    post(type, data) { const o = this.other; queueMicrotask(() => { const s = o._t.get(type); if (s) s.forEach((f) => f(data)); }); }
+  });
+  const a = mk(), b = mk(); a.other = b; b.other = a; return [a, b];
+}
+
+const SAB_OK = typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "undefined";
+
 // --- 1. lifecycle basics ---------------------------------------------------
 {
   const h = defineWorker((ctx) => { ctx.on("noop", () => {}); });
@@ -391,6 +406,61 @@ function pair() {
     globalThis.requestAnimationFrame = savedRaf;
     globalThis.cancelAnimationFrame = savedCaf;
   }
+}
+
+// --- 25. SAB mode: negotiation, seqlock publish, latest-wins --------------
+if (SAB_OK) {
+  const stride = 8, capacity = 4;
+  const [pt, ct] = pairTyped();
+  const p = frameChannel(pt, { stride, capacity }, { role: "producer" });
+  const c = frameChannel(ct, { stride, capacity }, { role: "consumer" });
+  ok("producer negotiates shared mode when SAB is available", p.mode === "shared" && p.shared === true);
+  await tick();
+  ok("consumer upgrades to shared on handshake", c.mode === "shared" && c.shared === true);
+
+  ok("read() is null before the first publish", c.read() === null);
+  p.produce((f) => { f[0] = 11; f[stride] = 22; });
+  const v = c.read();
+  ok("shared publish is visible to the consumer", !!v && v[0] === 11 && v[stride] === 22);
+  ok("produce() never starves in shared mode", p.produce(() => {}) === true && p.free === p.count);
+
+  for (let i = 0; i < 500; i++) p.produce((f) => { f[0] = i; });
+  const latest = c.read();
+  ok("consumer sees the newest frame after a burst", latest[0] === 499);
+  ok("unread frames count as dropped (latest-wins)", c.dropped > 0);
+
+  const dst = new Float32Array(stride * capacity);
+  p.produce((f) => { f[0] = 77; });
+  ok("readInto() takes a tear-free snapshot", c.readInto(dst) === true && dst[0] === 77);
+  ok("torn counter exposed and sane", typeof c.torn === "number" && c.torn >= 0);
+  p.dispose(); c.dispose();
+}
+
+// --- 26. SAB mode: explicit selection + graceful fallback ------------------
+{
+  const [pt, ct] = pairTyped();
+  ok("mode:'transfer' stays on the transferable ring even when SAB exists",
+    frameChannel(pt, 4, { role: "producer", capacity: 4, mode: "transfer" }).mode === "transfer");
+  ok("invalid mode throws", await throws(() => frameChannel(pt, 4, { role: "producer", capacity: 4, mode: "nope" }), "mode"));
+
+  // A bare { send, onRaw } transport can't negotiate the handover, so shared
+  // mode is unavailable and auto falls back silently.
+  const [bare] = pair();
+  ok("auto falls back to transfer on a transport without post()/on()",
+    frameChannel(bare, 4, { role: "producer", capacity: 4 }).mode === "transfer");
+  ok("explicit mode:'shared' on a bare transport throws",
+    await throws(() => frameChannel(bare, 4, { role: "producer", capacity: 4, mode: "shared" }), "post()"));
+
+  // Layout mismatch must not silently attach the wrong shared region.
+  if (SAB_OK) {
+    const [a, b] = pairTyped();
+    const prod = frameChannel(a, { stride: 4, capacity: 8 }, { role: "producer" });
+    const mism = frameChannel(b, { stride: 4, capacity: 9 }, { role: "consumer" });
+    await tick();
+    ok("consumer ignores a handshake whose layout doesn't match", mism.mode === "transfer");
+    prod.dispose(); mism.dispose();
+  }
+  ct.post; // touch to keep the pair alive for lint-free symmetry
 }
 
 console.log(results.join("\n"));

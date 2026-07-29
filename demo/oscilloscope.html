@@ -112,11 +112,12 @@
         <span>frames <b id="frames">0</b></span>
         <span id="freshWrap">fresh/s <b id="fresh">—</b></span>
         <span id="dropWrap">dropped <b id="drops">0</b></span>
+        <span id="modeWrap">channel <b id="chmode">—</b></span>
       </div>
     </fieldset>
   </div>
 
-  <div class="sub" id="caption">One pre-allocated pool of <code>Float32</code> buffers ping-pongs through <code>frameChannel</code>: the worker free-runs the synth faster than the screen refreshes, so intermediate frames drop (latest-wins) and memory stays flat. The second tab uses <code>adoptCanvas()</code> — <code>transferControlToOffscreen()</code> plus resize + visibility forwarding — so the worker draws its own frames, auto-pauses when the tab is hidden, and the main thread does nothing. Serve with <code>npx serve .</code>.</div>
+  <div class="sub" id="caption">One pre-allocated pool of <code>Float32</code> buffers ping-pongs through <code>frameChannel</code>: the worker free-runs the synth faster than the screen refreshes, so intermediate frames drop (latest-wins) and memory stays flat. The second tab uses <code>adoptCanvas()</code> — <code>transferControlToOffscreen()</code> plus resize + visibility forwarding — so the worker draws its own frames, auto-pauses when the tab is hidden, and the main thread does nothing. The <code>channel</code> readout shows which transport <code>frameChannel</code> negotiated: <code>shared</code> (SharedArrayBuffer + Atomics seqlock) when the page is cross-origin isolated, otherwise <code>transfer</code> — the fallback is silent and nothing else changes. Serve with <code>npx serve .</code>.</div>
 
 <script type="importmap">
 { "imports": { "@zakkster/lite-worker": "../Worker.js" } }
@@ -143,6 +144,8 @@ const $fps = document.getElementById("fps");
 const $frames = document.getElementById("frames");
 const $fresh = document.getElementById("fresh");
 const $drops = document.getElementById("drops");
+const $chmode = document.getElementById("chmode");
+const $modeWrap = document.getElementById("modeWrap");
 const $freshWrap = document.getElementById("freshWrap");
 const $dropWrap = document.getElementById("dropWrap");
 
@@ -270,6 +273,7 @@ function setScene(next) {
   // telemetry labels differ per scene
   $freshWrap.hidden = next === "offs";
   $dropWrap.hidden = next === "offs";
+  $modeWrap.hidden = next === "offs";
   $badge.textContent = next === "offs" ? "drawing on: worker · main idle" : "drawing on: main thread";
   sim.post("mode", next);
 }
@@ -321,6 +325,9 @@ function frame(now) {
       $frames.textContent = frameCount;
       $fresh.textContent = dts > 0 ? ((freshCount - lastFresh) / dts).toFixed(0) : "—";
       $drops.textContent = scope.dropped.toLocaleString();
+      // "shared" only when the page is cross-origin isolated (COOP/COEP);
+      // otherwise the channel transparently stays on the transferable ring.
+      $chmode.textContent = scope.mode;
     } else {
       $fps.textContent = workerFps.toFixed(0);
       $frames.textContent = workerFrames;

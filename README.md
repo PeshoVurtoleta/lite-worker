@@ -143,11 +143,38 @@ requestAnimationFrame(draw);
 
 **API.** Producer: `produce(fill) → boolean` (false = dropped), `free`, `dispose()`. Consumer: `read() → view | null`, `hasNew`, `dropped`, `dispose()`. Both expose `stride`, `capacity`, `byteLength`, `count`, `kind`, `role`.
 
-**Honest allocation note.** The data path is genuinely zero-copy (buffers are transferred, never cloned) and envelope-free (a raw buffer arriving at the consumer *is* a frame; arriving at the producer *is* a recycle — direction carries the meaning, so there's no tag object). The one unavoidable cost on the transfer model is a single typed-array *header* per buffer hop: transfer hands each side a fresh `ArrayBuffer` identity, so the view can't be cached across the boundary. `read()` itself is allocation-free (the view is cached until the next frame swaps in). That header is a few dozen bytes of transient garbage per hop — not a data copy — so throughput and memory stay flat (see `bench/frame-soak.mjs`). A `SharedArrayBuffer`-backed mode with literally zero per-hop headers is the natural next step, at the cost of requiring COOP/COEP — see the roadmap.
+**Honest allocation note.** The data path is genuinely zero-copy (buffers are transferred, never cloned) and envelope-free (a raw buffer arriving at the consumer *is* a frame; arriving at the producer *is* a recycle — direction carries the meaning, so there's no tag object). The one unavoidable cost on the transfer model is a single typed-array *header* per buffer hop: transfer hands each side a fresh `ArrayBuffer` identity, so the view can't be cached across the boundary. `read()` itself is allocation-free (the view is cached until the next frame swaps in). That header is a few dozen bytes of transient garbage per hop — not a data copy — so throughput and memory stay flat (see `bench/frame-soak.mjs`). A `SharedArrayBuffer`-backed mode that removes the per-hop header entirely landed in v1.3.0 — see [Shared mode](#shared-mode--the-sharedarraybuffer-fast-path-v130). Worth knowing before you reach for it: those headers are transient garbage rather than retained memory, so the measured retention is the same either way; what shared mode actually removes is the message traffic.
 
 **One channel owns the raw stream.** A `frameChannel` takes over `send`/`onRaw` on its transport; don't also use them directly while it's live. The typed plane (`post`/`call`/`on`) stays free for control messages like config.
 
 **OffscreenCanvas is the complement, not a competitor.** If your only consumer is a canvas, `transferControlToOffscreen()` hands it to the worker and the worker draws its own frames — the data never crosses back, so you don't need a channel at all. `frameChannel` is for when the frames *must* reach another thread: the main thread (for DOM or main-only APIs) or a second worker. The demo shows both side by side — tab one draws on the main thread through `frameChannel`, tab two transfers the canvas and draws on the worker with the main thread idle.
+
+## Shared mode — the SharedArrayBuffer fast path (v1.3.0)
+
+The transferable ring is the default and always works. Where the page is **cross-origin isolated**, `frameChannel` can instead put the frames in a `SharedArrayBuffer` and publish them with an `Atomics` seqlock — the sim writes one slot while the consumer reads another, and the flip is three atomic ops. In steady state there is **no `postMessage` traffic on the data path at all**.
+
+```js
+// Nothing changes at the call site — mode defaults to "auto".
+const ch = ctx.frameChannel({ stride: 8, capacity: 4096 }, { role: "producer" });
+ch.mode;    // "shared" when it negotiated the SAB, "transfer" otherwise
+```
+
+- **It negotiates itself.** The producer allocates the SAB and hands it over once through a reserved typed message; the consumer starts on the transferable ring and upgrades in place when it arrives. Construction order doesn't matter (a late consumer announces itself and the producer re-sends), and if anything is missing — no `SharedArrayBuffer`, no isolation, or a transport without the typed plane — both sides just stay on the ring. **The ring is the default; the SAB is the earned upgrade.**
+- **The deployment tax is real.** `SharedArrayBuffer` requires cross-origin isolation, which means serving `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`, and it will break cross-origin embeds that don't send CORP/CORS headers. That's a deliberate opt-in, not something to switch on casually. Pass `mode: "shared"` to make it a hard requirement (it throws instead of degrading) or `mode: "transfer"` to opt out entirely.
+- **Reading.** `read()` returns a view onto live shared memory — perfect for a renderer that immediately uploads it (`bufferSubData` straight from the view: sim in the worker, one copy total). If the data has to outlive the read, use `readInto(dst)`, which copies under the seqlock and retries if a publish lands mid-copy. `torn` counts those retries.
+- **Backpressure is unchanged.** Latest-wins either way. In shared mode the writer always has a slot, so `produce()` returns `true` and an unread frame is superseded in place; `dropped` still counts frames the consumer never saw.
+
+**What it actually buys you, measured.** Run `npm run gate`:
+
+```
+[1] transferable ring   1.22 B retained/frame · 556K frames/s
+[2] shared (SAB) mode   1.91 B retained/frame · 758K frames/s · torn=0
+    shared vs transferable: 1.36x throughput, and zero postMessage traffic
+```
+
+(That multiplier moves around — repeat runs on the same machine ranged ~1.4x to ~2.1x. Treat it as "meaningfully faster", not a fixed number, and re-run the gate on your own hardware.)
+
+Note what the retention numbers *don't* say. Both modes sit at the heap-sampling noise floor, because the ring's per-hop view header is **transient garbage, not retention** — a surviving-allocation gate can't see it, and neither mode retains anything per frame. The honest wins for shared mode are throughput and the disappearance of message traffic, not a lower retained-bytes number. If you were expecting "SAB finally makes it zero-alloc": the ring was already there on retention.
 
 ## adoptCanvas — OffscreenCanvas without the footguns (v1.2.0)
 
@@ -179,7 +206,7 @@ When the worker both produces *and* draws (as here), the frames never cross back
 
 - **Self-contained body.** The function is `.toString()`-serialized; it cannot capture variables from the surrounding module. Pass everything in via `post`/`send`, or inline it in the body. This matters especially under a **minifier** (Terser, esbuild, etc.): a bundler doesn't know the function will be stringified, so any outer variable it closes over gets renamed in the module but *not* inside the serialized string — the worker then throws `ReferenceError` at runtime. Keep the body free of closures and outer references. (`lite-worker`'s own serialized helpers reference only their arguments and true globals, so minifying the library itself is safe.)
 - **CSP.** Blob workers need `worker-src blob:` (or `child-src blob:` on older policies) in your Content-Security-Policy.
-- **Transferables, not SharedArrayBuffer.** v1.0.0's raw transport is built on transfer semantics and needs **no** cross-origin isolation (no COOP/COEP). Raw payloads must be `ArrayBuffer`s or ArrayBuffer views; a `SharedArrayBuffer` is out of scope here.
+- **Transferables by default, SharedArrayBuffer by opt-in.** The raw transport is built on transfer semantics and needs **no** cross-origin isolation; raw payloads must be `ArrayBuffer`s or ArrayBuffer views. `frameChannel` can additionally negotiate a `SharedArrayBuffer` where the page is cross-origin isolated — see [Shared mode](#shared-mode--the-sharedarraybuffer-fast-path-v130). It degrades to the ring silently, so nothing breaks when isolation is absent.
 - **No Blob URL leak.** The object URL is revoked the instant the `Worker` is constructed — the browser has already fetched the script by then. Spinning up many short-lived workers without ever calling `destroy()` leaves no object URLs piling up for the document's lifetime. `destroy()` is still the right call to free the worker *thread*; it just isn't what frees the URL.
 - **One extra core, not N.** A single worker is about keeping the main thread clean. For fan-out across cores, that's `lite-worker-pool` (v2.0.0).
 
@@ -187,8 +214,8 @@ When the worker both produces *and* draws (as here), the frames never cross back
 
 - **v1.0.0** — inline worker core: `defineWorker`, typed request/response with transferables, `spawn()` / `terminate()` / idempotent `destroy()`.
 - **v1.1.0** — `frameChannel`: bounded, latest-wins frame passing over a fixed transfer pool, with lite-gl `LAYOUT`-compatible strides.
-- **v1.2.0** (this release) — `adoptCanvas`: `transferControlToOffscreen()` plus resize forwarding (ResizeObserver) and visibility forwarding (auto-pause), with a worker-side `ctx.onCanvas` render loop.
-- **v1.3.0** (planned) — SAB fast path: a `SharedArrayBuffer` double-buffer with an `Atomics` seqlock (sim writes A while main reads B, flip on frame boundary) — zero `postMessage` traffic in steady state and literally zero per-hop headers. Feature-detected and gated behind cross-origin isolation (COOP/COEP); falls back transparently to the v1.1.0 transferable ring, which stays the default.
+- **v1.2.0** — `adoptCanvas`: `transferControlToOffscreen()` plus resize forwarding (ResizeObserver) and visibility forwarding (auto-pause), with a worker-side `ctx.onCanvas` render loop.
+- **v1.3.0** (this release) — shared mode: a `SharedArrayBuffer` double-buffer with an `Atomics` seqlock (the sim writes one slot while the consumer reads another, flipping on the frame boundary) — zero `postMessage` traffic in steady state. Feature-detected behind cross-origin isolation (COOP/COEP) and negotiated automatically; falls back transparently to the transferable ring, which stays the default.
 - **v2.0.0** — `lite-worker-pool` (separate package): an N-worker pool with a `map(items, workerFn)` surface and per-worker transferable scratch buffers, for embarrassingly parallel batch work. Depends on core; core never depends on it.
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for the full release history and [`llms.txt`](./llms.txt) for a machine-readable API digest.

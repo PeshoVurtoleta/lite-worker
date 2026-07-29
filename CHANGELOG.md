@@ -5,6 +5,48 @@ All notable changes to `@zakkster/lite-worker` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-07-19
+
+### Added
+
+- **Shared mode** — `frameChannel` can now put frames in a `SharedArrayBuffer`
+  and publish them with an `Atomics` seqlock (bump the sequence odd, swing the
+  published-slot index, bump it even). The producer writes one slot while the
+  consumer reads another, so in steady state there is **no `postMessage` traffic
+  on the data path at all**.
+  - `options.mode`: `"auto"` (default — take the shared path when it's available,
+    otherwise the transferable ring), `"shared"` (alias `"sab"` — require it, and
+    throw rather than degrade), or `"transfer"` (always the ring).
+  - Negotiated automatically: the producer allocates the SAB and hands it over
+    through a reserved `lw:fc:sab` typed message; the consumer starts on the ring
+    and upgrades in place. Construction order doesn't matter — a consumer built
+    later announces itself via `lw:fc:hello` and the producer re-sends. A
+    handshake whose layout doesn't match is ignored.
+  - Falls back transparently when `SharedArrayBuffer` is missing, the page isn't
+    cross-origin isolated (`crossOriginIsolated === false`), or the transport has
+    no typed plane. **The transferable ring stays the default.**
+  - `channel.mode` / `channel.shared` report which transport is in use.
+- `consumer.readInto(dst)` — copies the freshest frame under the seqlock and
+  retries if a publish lands mid-copy, for when the data outlives the read.
+  `consumer.torn` counts those retries. `read()` remains the allocation-free fast
+  path and, in shared mode, returns a view onto live shared memory.
+- `producer.published` (shared mode) — total frames published.
+- `bench/gc-gate.mjs` (`npm run gate`) — the release gates, measured with
+  `@zakkster/lite-gc-profiler`: a 10k-frame steady-state retention soak on the
+  frame channel in both directions and both modes, a 200-cycle spawn/destroy
+  orphan check (Blob URLs, worker threads), and a bundle guard (single JS file,
+  size budget, no runtime dependencies).
+
+### Notes
+
+- Shared mode's measured *retention* is not lower than the ring's: the ring's
+  per-hop view header is transient garbage, not retained memory, so a
+  surviving-allocation gate reads ~0 for both. What shared mode actually buys is
+  throughput (~1.4-2.1x across repeat gate runs) and the removal of message traffic.
+- Cross-origin isolation is a real deployment cost (`COOP: same-origin` +
+  `COEP: require-corp`, and cross-origin embeds must send CORP/CORS). Shared mode
+  is opt-in by design and never silently changes what a non-isolated page does.
+
 ## [1.2.0] - 2026-07-17
 
 ### Added
@@ -114,6 +156,7 @@ Initial release — the inline worker core.
 - Phosphor oscilloscope demo: off-thread waveform synthesis with double-buffered
   transferable ping-pong and a zero-allocation render loop.
 
+[1.3.0]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.3.0
 [1.2.0]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.2.0
 [1.1.0]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.1.0
 [1.0.0]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.0.0

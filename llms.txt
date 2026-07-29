@@ -9,6 +9,9 @@
 > (v2.0.0). v1.1.0 adds frameChannel: a bounded, latest-wins frame channel over a
 > fixed transfer pool, with lite-gl LAYOUT-compatible strides. v1.2.0 adds
 > adoptCanvas: transferControlToOffscreen plus resize + visibility forwarding.
+> v1.3.0 adds shared mode: an opt-in SharedArrayBuffer + Atomics seqlock transport
+> for frameChannel with zero postMessage traffic, negotiated automatically and
+> falling back to the transferable ring when cross-origin isolation is absent.
 
 ## Mental model
 
@@ -69,12 +72,22 @@ frames drop (latest-wins) instead of queueing.
   or `{ bytes }`. The stride form matches lite-gl `LAYOUT` (POINT 8, QUAD/LINE 9): a
   channel of `{ stride, capacity }` holds a `Float32Array(capacity*stride)`, so a
   projected instance field crosses the boundary unmodified (same `i*stride` indexing).
-- `options`: `{ role: "producer" | "consumer" (required), count?=2 (min 2, pool size),
-  capacity?, onFrame? }`.
-- Producer: `produce(fill) -> boolean` (fill(view, buffer); returns false when the
-  pool is momentarily empty = frame dropped, sim just advances), `free`, `dispose()`.
-- Consumer: `read() -> Float32Array | Uint8Array | null` (non-destructive, view cached
-  until the next swap so it is allocation-free per rAF), `hasNew`, `dropped`, `dispose()`.
+- `options`: `{ role: "producer" | "consumer" (required), mode?, count?=2 (min 2,
+  pool size), capacity?, onFrame? }`.
+- `options.mode`: "auto" (default) | "shared" (alias "sab") | "transfer".
+  * "auto"     -> use the SharedArrayBuffer path when SAB exists AND the page is
+                  cross-origin isolated AND the transport has post()/on(); else ring.
+  * "shared"   -> require it; THROWS instead of degrading.
+  * "transfer" -> always the transferable ring.
+  Read `channel.mode` ("shared" | "transfer") / `channel.shared` to see what it got.
+- Producer: `produce(fill) -> boolean` (fill(view, buffer); in transfer mode returns
+  false when the pool is momentarily empty = frame dropped, sim just advances; in
+  shared mode the writer always has a slot so it returns true and an unread frame is
+  superseded in place), `free`, `published` (shared), `dispose()`.
+- Consumer: `read() -> Float32Array | Uint8Array | null` (non-destructive, views cached
+  so it is allocation-free per rAF; in SHARED mode the view aliases live shared memory
+  — consume it immediately), `readInto(dst) -> boolean` (seqlock-checked tear-free copy,
+  retries if a publish lands mid-copy), `hasNew`, `dropped`, `torn` (shared), `dispose()`.
 - Both expose `role`, `kind` ("f32"|"bytes"), `stride`, `capacity`, `byteLength`, `count`.
 - Wire protocol: direction carries meaning (no tag/envelope) — a raw buffer at the
   consumer is a fresh frame; at the producer it is a recycle. So a frameChannel OWNS
@@ -85,6 +98,25 @@ frames drop (latest-wins) instead of queueing.
   ArrayBuffer identity each hop, so views can't cross the boundary cached). `read()`
   itself allocates nothing. A SharedArrayBuffer-backed zero-header mode is planned
   for v1.2.0 (needs COOP/COEP).
+
+## Shared mode (v1.3.0) — SharedArrayBuffer + Atomics seqlock
+
+Opt-in fast path for frameChannel. Layout: a 4-slot Int32 header
+[SEQ, PUB, FRAMES, reserved] followed by `count` frame slots. Publish = write the
+non-published slot, Atomics.add(SEQ,1) -> odd, Atomics.store(PUB, slot),
+Atomics.add(SEQ,1) -> even, Atomics.add(FRAMES,1). A reader that sees an odd or
+changed SEQ knows it raced.
+
+- Zero postMessage traffic on the data path in steady state.
+- Handshake rides reserved typed messages `lw:fc:sab` (producer -> consumer, carries
+  the SAB + layout) and `lw:fc:hello` (consumer -> producer, "re-send, I was late").
+- Requires cross-origin isolation in browsers: COOP: same-origin + COEP: require-corp,
+  and cross-origin embeds must send CORP/CORS. A real deployment tax; opt in knowingly.
+- Feature-detected: falls back to the transferable ring when SAB is missing,
+  crossOriginIsolated === false, or the transport has no typed plane. Ring is default.
+- Measured: ~1.36x throughput vs the ring. NOTE retention is NOT lower — the ring's
+  per-hop view header is transient garbage, not retained, so a surviving-allocation
+  gate reads ~0 for both. The win is throughput + no message traffic, not retained bytes.
 
 ## adoptCanvas (v1.2.0) — OffscreenCanvas with resize + visibility handled
 
@@ -140,5 +172,6 @@ thread or another worker; adoptCanvas is for when the worker owns the pixels.
 - Worker.d.ts — full strict TypeScript declarations.
 - demos/oscilloscope.html — off-thread waveform synthesis; tab 1 dogfoods `frameChannel` (worker produces, main draws, latest-wins), tab 2 dogfoods `adoptCanvas` (worker draws to a transferred canvas, main idle).
 - bench/frame-soak.mjs — fast-producer/slow-consumer soak proving bounded memory + latest-wins (not shipped in the npm tarball).
+- bench/gc-gate.mjs — release gates via @zakkster/lite-gc-profiler: 10k-frame retention soak (both directions, both modes), spawn/destroy orphan check, bundle guard. `npm run gate`.
 
 License: MIT © Zahary Shinikchiev
