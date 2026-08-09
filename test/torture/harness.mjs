@@ -182,3 +182,36 @@ export function installSelfShim(port, globalObj) {
   });
   return g;
 }
+
+// ---------------------------------------------------------------------------
+// Main-side transport over a real node:worker_threads Worker. Gives frameChannel
+// the { send, onRaw, post, on } shape it expects, translating to/from the same
+// message protocol WorkerHandle uses: raw ArrayBuffers/views on the data plane
+// (transferred, matching browser Worker semantics), and the { t, i, d } envelope
+// the worker runtime posts on the typed plane (the SAB handshake rides this).
+// Symmetric with installSelfShim on the other end of the same MessagePort.
+// ---------------------------------------------------------------------------
+export function nodeThreadTransport(worker) {
+  const rawHandlers = new Set();
+  const typed = new Map(); // type -> Set(fn)
+  worker.on("message", (data) => {
+    if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+      rawHandlers.forEach((fn) => fn(data));
+      return;
+    }
+    if (data && typeof data === "object" && data.t !== undefined) {
+      const s = typed.get(data.t);
+      if (s) s.forEach((fn) => fn(data.d));
+    }
+  });
+  return {
+    onRaw(fn) { rawHandlers.add(fn); return () => rawHandlers.delete(fn); },
+    send(buf, transfer) {
+      if (transfer !== undefined) { worker.postMessage(buf, transfer); return; }
+      const ab = buf instanceof ArrayBuffer ? buf : (ArrayBuffer.isView(buf) ? buf.buffer : null);
+      worker.postMessage(buf, ab ? [ab] : []);
+    },
+    on(type, fn) { let s = typed.get(type); if (!s) { s = new Set(); typed.set(type, s); } s.add(fn); return () => s.delete(fn); },
+    post(type, data, transfer) { worker.postMessage({ t: type, i: 0, d: data === undefined ? null : data }, transfer || []); }
+  };
+}

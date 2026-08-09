@@ -13,18 +13,23 @@
 // Every gate ships a T9 control that MUST report failure; a gate that cannot
 // fail is decorative (W-01 was the limiting case -- a gate that never ran).
 
+import { Worker as NodeWorker } from "node:worker_threads";
+import { fileURLToPath } from "node:url";
 import { measureOps, checkOps } from "@zakkster/lite-gc-profiler";
 import { defineWorker, frameChannel } from "../Worker.js";
 import {
   mockRegistry,
-  pair,
-  pairTyped,
   syncPair,
   xorshift32,
   settle,
   makeTracker,
   NOOP_CLEANUP,
+  nodeThreadTransport,
 } from "./torture/harness.mjs";
+
+// harness.mjs shadows the global URL with a Blob-URL mock, so resolve the entry
+// path via import.meta.resolve rather than `new URL(...)`.
+const THREAD_ENTRY = fileURLToPath(import.meta.resolve("./torture/thread-entry.mjs"));
 
 const log = (s) => process.stderr.write(s + "\n");
 
@@ -241,6 +246,301 @@ async function t2() {
 }
 
 // ---------------------------------------------------------------------------
+// Real-thread scaffolding for T3/T5/T6-real. These tiers spin an ACTUAL
+// node:worker_threads Worker running lite-worker's serialized WORKER_RUNTIME +
+// makeFrameChannel UNCHANGED (via defineWorker()._source, the real serializer)
+// over installSelfShim -- so the seqlock is exercised against a real writer on a
+// second OS thread, not an in-process mock (W-04/W-05).
+// ---------------------------------------------------------------------------
+
+// The real, unmodified serialized worker source for a producer body.
+function realSource(producerFn) { return defineWorker(producerFn)._source; }
+
+// Pump the event loop until pred() is truthy or the timeout elapses. setImmediate
+// yields so worker.on("message") deliveries (the SAB handshake, acks) can land.
+function waitFor(pred, timeoutMs, label) {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    const tick = () => {
+      if (pred()) return resolve();
+      if (Date.now() - start > timeoutMs) return reject(fail(label + ": timed out after " + timeoutMs + "ms"));
+      setImmediate(tick);
+    };
+    tick();
+  });
+}
+
+// Spin a real worker running `source`, wire a main-side transport, and build a
+// shared-mode consumer over it. Returns handles; caller drives + must terminate.
+function spawnRealConsumer(source, layout, count) {
+  const worker = new NodeWorker(THREAD_ENTRY, { workerData: { source } });
+  let werr = null;
+  worker.on("error", (e) => { werr = e; });
+  const transport = nodeThreadTransport(worker);
+  const cons = frameChannel(transport, layout, { role: "consumer", mode: "shared", count });
+  return { worker, transport, cons, err: () => werr };
+}
+
+// --- t3Producer: hostile writer. Publishes as fast as it can, forever; every
+// lane of every frame carries the same monotonically-increasing id, so a torn
+// read is detectable as a lane that disagrees with lane 0. Main terminates it.
+function t3Producer(ctx) {
+  ctx.on("go", function (cfg) {
+    var chan = ctx.frameChannel(
+      { stride: cfg.stride, capacity: cfg.capacity },
+      { role: "producer", mode: "shared", count: cfg.count }
+    );
+    var lanes = cfg.stride * cfg.capacity;
+    var id = 0;
+    var fill = function (view) {
+      var v = id % 16777216;           // stay exact in Float32 (< 2^24)
+      for (var k = 0; k < lanes; k++) view[k] = v;
+    };
+    for (;;) { id++; chan.produce(fill); }
+  });
+}
+
+// --- t5Producer: lockstep. Publishes exactly the value main asks for and acks,
+// so at read time the "newest published" oracle is known precisely.
+function t5Producer(ctx) {
+  var chan = null, lanes = 0, pv = 0;
+  var fill = function (view) { for (var k = 0; k < lanes; k++) view[k] = pv; };
+  ctx.on("init", function (cfg) {
+    chan = ctx.frameChannel(
+      { stride: cfg.stride, capacity: cfg.capacity },
+      { role: "producer", mode: "shared", count: cfg.count }
+    );
+    lanes = cfg.stride * cfg.capacity;
+    ctx.post("ready", 1);
+  });
+  ctx.on("prod", function (d) { pv = d.v; chan.produce(fill); ctx.post("ack", d.n); });
+}
+
+// --- transferProducer: real transferable-ring producer for the T6-real check.
+// Floods the ring; the consumer recycles buffers back. Paced on the microtask
+// queue so recycles are processed (the pool bounds it to `count` in flight).
+function transferProducer(ctx) {
+  ctx.on("go", function (cfg) {
+    var chan = ctx.frameChannel(
+      { stride: cfg.stride, capacity: cfg.capacity },
+      { role: "producer", mode: "transfer", count: cfg.count }
+    );
+    var id = 0;
+    var fill = function (view) { view[0] = id; };
+    var pump = function () {
+      while (chan.produce(fill)) { id++; }
+      setTimeout(pump, 0);
+    };
+    pump();
+  });
+}
+
+// Run a hostile-writer session: hammer read()/readInto() against `source` for up
+// to `target` ops (or the wall-clock deadline). Returns { ops, snaps, bad, torn }
+// where `bad` counts readInto snapshots whose lanes disagreed (a leaked tear).
+async function runHostile(source, cfg, target, timeoutMs) {
+  const lanes = cfg.stride * cfg.capacity;
+  const layout = { stride: cfg.stride, capacity: cfg.capacity };
+  const { worker, transport, cons, err } = spawnRealConsumer(source, layout, cfg.count);
+  transport.post("go", { stride: cfg.stride, capacity: cfg.capacity, count: cfg.count });
+  try {
+    await waitFor(() => cons.shared || err(), 8000, "runHostile shared handshake");
+  } catch (e) { await worker.terminate(); throw e; }
+  if (err()) { await worker.terminate(); throw err(); }
+  if (!cons.shared) { await worker.terminate(); throw fail("consumer never negotiated shared mode over the real thread"); }
+
+  const dst = new Float32Array(lanes);
+  const deadline = Date.now() + timeoutMs;
+  let ops = 0, bad = 0, snaps = 0;
+  while (ops < target) {
+    if (cons.readInto(dst)) {
+      snaps++;
+      const v0 = dst[0];
+      for (let k = 1; k < lanes; k++) { if (dst[k] !== v0) { bad++; break; } }
+    }
+    cons.read(); // live-view fast path; also drives torn on an odd SEQ
+    ops++;
+    if ((ops & 8191) === 0 && Date.now() > deadline) break;
+  }
+  const torn = cons.torn;
+  cons.dispose();
+  await worker.terminate();
+  return { ops, snaps, bad, torn };
+}
+
+// ---------------------------------------------------------------------------
+// T3 -- REAL two-thread SAB seqlock under a hostile writer (W-04/W-05). Proves
+// readInto never leaks a torn frame, that torn > 0 under a genuine race (the
+// metamorphic opposite of W-05's always-zero), the W-06 live-view boundary
+// (light), and that the consumer read path retains ~0 over a real transfer.
+// ---------------------------------------------------------------------------
+async function t3() {
+  if (!SAB_OK) throw fail("T3: SharedArrayBuffer unavailable -- cannot prove the seqlock");
+
+  const cfg = { stride: 8, capacity: 64, count: 2 };
+  const r = await runHostile(realSource(t3Producer), cfg, 1e6, 25000);
+  log("    T3 hostile: ops=" + r.ops + " readInto-snaps=" + r.snaps + " torn=" + r.torn + " torn-frames-leaked=" + r.bad);
+  if (r.ops < 1e6) log("    T3 NOTE: hostile ops capped at " + r.ops + " by wall-clock (target 1e6)");
+  if (r.bad !== 0) throw fail("T3: readInto leaked " + r.bad + " torn frame(s) across a real thread -- the seqlock is BROKEN");
+  if (r.torn <= 0) throw fail("T3: torn stayed 0 under a genuine race -- seqlock accounting is suspect, investigate Worker.js");
+
+  // W-06 (light): read()'s live view is coherent for exactly count-1 publishes
+  // and is overwritten on the count-th. Single-threaded shared; the full pinning
+  // (both modes, by name, with docs) is W2's scope -- this is just a boundary
+  // spot-check while the shared path is warm.
+  {
+    const [pt, ct] = syncPair(true);
+    const prod = frameChannel(pt, { stride: 4, capacity: 1 }, { role: "producer", mode: "shared", count: 2 });
+    const cons = frameChannel(ct, { stride: 4, capacity: 1 }, { role: "consumer", mode: "shared", count: 2 });
+    if (cons.mode !== "shared") throw fail("T3 W-06: shared negotiation failed");
+    prod.produce((f) => { f[0] = 100; });
+    const held = cons.read();                 // live view over slots[PUB]
+    const v0 = held[0];
+    prod.produce((f) => { f[0] = 200; });      // count-1 = 1 publish: still coherent
+    const afterOne = held[0];
+    prod.produce((f) => { f[0] = 300; });      // count-th publish: reuses the held slot
+    const afterTwo = held[0];
+    prod.dispose(); cons.dispose();
+    if (v0 !== 100) throw fail("T3 W-06: initial live view = " + v0 + " != 100");
+    if (afterOne !== 100) throw fail("T3 W-06: live view not coherent for count-1 publishes (" + afterOne + " != 100)");
+    if (afterTwo !== 300) throw fail("T3 W-06: live view not overwritten on the count-th publish (" + afterTwo + " != 300)");
+  }
+
+  // T6 over the real thread (shared mode): once the SAB is attached the consumer
+  // read path is fully synchronous (Atomics on shared memory, no messaging), so
+  // measureOps CAN gate it -- and the data genuinely crosses an OS thread. A
+  // hostile producer keeps flooding on its own core during the measurement.
+  {
+    const rcfg = { stride: 8, capacity: 256, count: 2 };
+    const lanes = rcfg.stride * rcfg.capacity;
+    const { worker, transport, cons, err } = spawnRealConsumer(realSource(t3Producer), { stride: rcfg.stride, capacity: rcfg.capacity }, rcfg.count);
+    transport.post("go", rcfg);
+    try {
+      await waitFor(() => cons.shared || err(), 8000, "T3 T6-real shared handshake");
+    } catch (e) { await worker.terminate(); throw e; }
+    if (err()) { await worker.terminate(); throw err(); }
+    if (!cons.shared) { await worker.terminate(); throw fail("T3 T6-real shared: consumer never negotiated shared mode over the real thread"); }
+    const dst = new Float32Array(lanes);
+    const roundTrip = () => { cons.read(); cons.readInto(dst); };
+    const res = measureOps(roundTrip, { ops: 10000, warmup: 2000, stabilize: true });
+    const rep = checkOps(res, { maxBytesPerOp: 8, maxMajorsPerKOp: 0 });
+    cons.dispose();
+    await worker.terminate();
+    log("    T3 T6-real(shared): " + (res.bytesPerOp === null ? "n/a" : res.bytesPerOp.toFixed(2)) + " B/op over a real thread, verdict=" + rep.verdict);
+    if (rep.verdict !== "pass") throw fail("T3 T6-real shared: retention gate " + rep.verdict + " over a real thread");
+  }
+
+  // T6 over the real thread (transfer mode): a real ArrayBuffer transfer per
+  // frame. This is inherently ASYNC (postMessage both ways) and does NOT fit
+  // measureOps's synchronous op model, so -- per the harness rule -- it is gated
+  // with a heap delta across a fixed transfer count after settle(), not a faked
+  // measureOps number. A real per-frame RETENTION would be 100+ B/op; the
+  // transient view header is GC'd, so the post-settle delta must be near zero.
+  {
+    const tcfg = { stride: 8, capacity: 256, count: 3 };
+    const worker = new NodeWorker(THREAD_ENTRY, { workerData: { source: realSource(transferProducer) } });
+    let werr = null;
+    worker.on("error", (e) => { werr = e; });
+    const transport = nodeThreadTransport(worker);
+    let received = 0;
+    const cons = frameChannel(transport, { stride: tcfg.stride, capacity: tcfg.capacity }, {
+      role: "consumer", mode: "transfer", count: tcfg.count, onFrame: () => { received++; }
+    });
+    transport.post("go", tcfg);
+    try {
+      await waitFor(() => received > 2000 || werr, 15000, "T3 T6-real transfer warmup");
+    } catch (e) { await worker.terminate(); throw e; }
+    if (werr) { await worker.terminate(); throw werr; }
+    await settle();
+    const base = process.memoryUsage().heapUsed;
+    const start = received;
+    const N = 20000;
+    try {
+      await waitFor(() => (received - start) >= N || werr, 20000, "T3 T6-real transfer soak");
+    } catch (e) { await worker.terminate(); throw e; }
+    const moved = received - start;
+    await settle();
+    const delta = process.memoryUsage().heapUsed - base;
+    cons.dispose();
+    await worker.terminate();
+    if (werr) throw werr;
+    if (cons.byteLength !== tcfg.stride * tcfg.capacity * 4) throw fail("T3 T6-real transfer: consumer byteLength drifted");
+    log("    T3 T6-real(transfer): " + moved + " real transfers, heap delta " + (delta / 1024).toFixed(1) + " KiB (" + (delta / moved).toFixed(1) + " B/transfer, coarse)");
+    if (delta > 1024 * 1024) throw fail("T3 T6-real transfer: heap grew " + (delta / 1024).toFixed(0) + " KiB over " + moved + " real transfers -- retention, not noise");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// T5 -- differential fuzz across a REAL thread vs a plain oracle modelling the
+// newest value published. Lockstep produce (acked) so the oracle is exact; mixed
+// produce/read/readInto ops; every read must equal the oracle's newest (drops
+// allowed). On divergence: TORTURE_SEED + op index for replay.
+// ---------------------------------------------------------------------------
+async function t5() {
+  if (!SAB_OK) throw fail("T5: SharedArrayBuffer unavailable -- cannot fuzz the shared channel");
+
+  const cfg = { stride: 8, capacity: 16, count: 2 };
+  const lanes = cfg.stride * cfg.capacity;
+  const { worker, transport, cons, err } = spawnRealConsumer(realSource(t5Producer), { stride: cfg.stride, capacity: cfg.capacity }, cfg.count);
+
+  let ackResolve = null;
+  transport.on("ack", () => { if (ackResolve) { const r = ackResolve; ackResolve = null; r(); } });
+  let ready = false;
+  transport.on("ready", () => { ready = true; });
+
+  transport.post("init", cfg);
+  try {
+    await waitFor(() => (ready && cons.shared) || err(), 8000, "T5 init/handshake");
+  } catch (e) { await worker.terminate(); throw e; }
+  if (err()) { await worker.terminate(); throw err(); }
+  if (!cons.shared) { await worker.terminate(); throw fail("T5: consumer never negotiated shared over the real thread"); }
+
+  const rand = xorshift32(SEED ^ 0x5a5a5a5a);
+  const dst = new Float32Array(lanes);
+  let newest = -1, produces = 0, reads = 0, n = 0;
+  const OPS = 100000;
+  const deadline = Date.now() + 30000;
+
+  const produce = (v) => new Promise((res) => { ackResolve = res; transport.post("prod", { v, n: ++n }); });
+
+  let i = 0;
+  try {
+    for (; i < OPS; i++) {
+      const roll = rand();
+      if (newest < 0 || roll < 0.5) {
+        const v = (i % 16000000) + 1;        // exact in Float32, always > 0
+        await produce(v);
+        if (err()) throw err();
+        newest = v;
+        produces++;
+      } else if (roll < 0.75) {
+        if (cons.readInto(dst)) {
+          reads++;
+          for (let k = 0; k < lanes; k++) {
+            if (dst[k] !== newest) throw fail("T5 readInto: lane " + k + "=" + dst[k] + " != oracle newest " + newest, i);
+          }
+        }
+      } else {
+        const view = cons.read();
+        if (view) {
+          reads++;
+          for (let k = 0; k < lanes; k++) {
+            if (view[k] !== newest) throw fail("T5 read: lane " + k + "=" + view[k] + " != oracle newest " + newest, i);
+          }
+        }
+      }
+      if ((i & 8191) === 0 && Date.now() > deadline) break;
+    }
+  } finally {
+    cons.dispose();
+    await worker.terminate();
+  }
+  log("    T5: ops=" + i + " produces=" + produces + " reads=" + reads);
+  if (i < OPS) log("    T5 NOTE: fuzz ops capped at " + i + " by wall-clock (target " + OPS + ")");
+  if (produces === 0 || reads === 0) throw fail("T5: degenerate op mix (produces=" + produces + " reads=" + reads + ")");
+}
+
+// ---------------------------------------------------------------------------
 // T6 -- zero-retention gate, both modes, plus the structural pool invariance a
 // heap gate cannot substitute for.
 // ---------------------------------------------------------------------------
@@ -389,6 +689,22 @@ async function t9() {
     retained.length = 0;
     if (live === 0) throw fail("T9: retention control was collected -- the leak gate cannot fail (decorative)");
   }
+
+  // T3/T5 seqlock control: take the REAL serialized producer and STRIP the two
+  // odd/even SEQ bumps, then run it as a hostile writer on a real thread. With
+  // SEQ frozen even, readInto's re-check always "passes", so torn frames reach
+  // the caller -- which the all-lanes-equal predicate (the exact gate T3/T5 rely
+  // on) MUST catch. If the stripped seqlock never tears a snapshot, the tear
+  // gate is decorative, the way W-01's gate that never ran was.
+  if (SAB_OK) {
+    const good = realSource(t3Producer);
+    const stripped = good.split("Atomics.add(hdr, SEQ, 1);").join("");
+    if (stripped === good) throw fail("T9: could not strip the SEQ bumps -- source drifted, update the control");
+    const cfg = { stride: 8, capacity: 128, count: 2 };
+    const r = await runHostile(stripped, cfg, 300000, 20000);
+    log("    T9 seqlock-control: ops=" + r.ops + " readInto-snaps=" + r.snaps + " torn-frames-caught=" + r.bad);
+    if (r.bad === 0) throw fail("T9: stripped-seqlock producer never tore a readInto snapshot -- the tear gate is decorative");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -400,9 +716,9 @@ const TIERS = [
   { name: "T0", run: t0 },
   { name: "T1", run: t1 },
   { name: "T2", run: t2 },
-  { name: "T3", pending: "real-thread seqlock (W1)" },
+  { name: "T3", run: t3 },
   { name: "T4", pending: "backpressure (W2)" },
-  { name: "T5", pending: "differential fuzz (W1)" },
+  { name: "T5", run: t5 },
   { name: "T6", run: t6 },
   { name: "T7", run: t7 },
   { name: "T8", pending: "LAYOUT conformance (W2)" },
@@ -434,9 +750,12 @@ log(
   " | alloc=" + metrics.bytesPerOp.toFixed(2) + " B/op"
 );
 
+// Exit via the write callback so the "ok" byte is flushed to a pipe before the
+// process tears down -- process.exit() alone races the async stdout drain now
+// that real worker threads make stdout buffered.
 if (failed) {
-  process.exit(1);
+  process.exitCode = 1;
+  process.stderr.write("", () => process.exit(1));
 } else {
-  process.stdout.write("ok\n");
-  process.exit(0);
+  process.stdout.write("ok\n", () => process.exit(0));
 }

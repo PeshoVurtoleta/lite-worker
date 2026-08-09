@@ -5,6 +5,51 @@ All notable changes to `@zakkster/lite-worker` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-08-09
+
+Proof release. No runtime behaviour changes to `Worker.js` -- only the
+three-place `VERSION` bump. Shared mode's tear-free seqlock is now proven against
+a REAL hostile writer on a second OS thread, converting W-04/W-05 from a green
+light over a hole (blueprint AR-02) into a proof.
+
+### Added
+
+- **Torture T3 -- real two-thread SAB seqlock (W-04/W-05).** A real
+  `node:worker_threads` Worker evaluates lite-worker's serialized `WORKER_RUNTIME`
+  + `makeFrameChannel` UNCHANGED (via the real serializer, over a `parentPort`
+  `self`-shim) and publishes frames in a tight hostile loop; every lane carries a
+  monotonically-increasing frame id, so a torn read shows a lane that disagrees.
+  The main thread hammers `read()`/`readInto()`. Over >= 1e6 hostile ops:
+  `readInto()` leaked **zero** torn frames (every returned snapshot is a single
+  coherent frame the producer actually wrote), and `torn` is provably **> 0**
+  (~1.2M-1.4M observed) -- the metamorphic opposite of W-05's structural zero.
+  Includes a light W-06 live-view boundary spot-check (coherent for exactly
+  `count - 1` publishes; full pinning is deferred to W2) and the T6 retention
+  gate run over the real thread in both modes (shared via `measureOps`, ~0 B/op;
+  transfer via a post-`settle()` heap delta, since the async transfer cannot fit
+  `measureOps`'s synchronous op model).
+- **Torture T5 -- differential fuzz across a real thread.** Mixed
+  produce/read/readInto ops (100k) driven lockstep against a plain-array oracle
+  of the newest value published; every read must equal the oracle's newest
+  (latest-wins drops allowed). Divergence prints `TORTURE_SEED` + op index for
+  replay.
+- **Torture T9 seqlock control.** A copy of the serialized producer with the
+  odd/even `SEQ` bumps stripped is run as a hostile writer; the all-lanes-equal
+  tear predicate that T3/T5 rely on MUST catch the resulting torn reads (~4k
+  observed). A tear gate that cannot fail is decorative -- this proves it can.
+- `test/torture/thread-entry.mjs` and a `nodeThreadTransport` harness helper wire
+  the real-thread transport. `test/` stays out of `files[]`.
+
+### Known issues (still deferred)
+
+- **W-06** -- the shared-mode live-view lifetime is spot-checked in T3 but not yet
+  pinned by name in both modes with docs; that is W2.
+- **W-07** -- README/llms.txt reference a `demos/` path (dir is `demo/`); fixed in
+  W3 with the doc-number regeneration.
+- **W-10** -- the `lw:fc:sab` handshake does not yet guard
+  `m.sab instanceof SharedArrayBuffer`, and `lw:fc:*` is undocumented as reserved;
+  hardened + documented in W2.
+
 ## [1.3.1] - 2026-08-09
 
 Proof-infrastructure patch release. No runtime behaviour changes to `Worker.js` --
@@ -214,6 +259,7 @@ Initial release — the inline worker core.
 - Phosphor oscilloscope demo: off-thread waveform synthesis with double-buffered
   transferable ping-pong and a zero-allocation render loop.
 
+[1.3.2]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.3.2
 [1.3.1]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.3.1
 [1.3.0]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.3.0
 [1.2.0]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.2.0
