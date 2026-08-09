@@ -5,6 +5,47 @@ All notable changes to `@zakkster/lite-worker` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.4] - 2026-08-09
+
+Doc-truth release. No `Worker.js`/`Worker.d.ts` executable-code changes -- only the
+three-place `VERSION` bump and comment/doc ASCII normalization. Every published
+number is now regenerable by a shipped script, and the last two known doc issues
+(W-01, W-07) recorded in the [1.3.1] entry are fixed here.
+
+### Fixed
+
+- **W-01 -- fabricated gate numbers regenerated.** README and this changelog
+  published gate output the shipped gate never produced (`1.22 B/frame - 556K
+  frames/s` ring, `1.91 B - 758K - 1.36x` shared). Throughput was overstated by
+  roughly 8x. Regenerated from repeated `npm run gate` runs on the reference
+  machine (2026-08-09). Retention is the claim the gate enforces and it is stable:
+  the transferable ring retains ~0 B/frame, shared (SAB) mode ~0.2-0.3 B/frame,
+  both well under the 8 B/frame bar every run, with `torn=0` under the synchronous
+  gate producer. Absolute throughput (several million frames/s in both modes) is
+  machine- and load-dependent and is now framed as such rather than as a fixed
+  figure; shared runs typically ~1.3-2.1x the ring across runs. Both modes sitting
+  at the retention noise floor was always true. A "re-run `npm run gate`" provenance
+  line now sits beside the numbers.
+- **W-07 -- dead demo path.** README and `llms.txt` referenced
+  `demos/oscilloscope.html`; the directory is `demo/` (singular). Both fixed.
+
+### Documentation
+
+- **Full ASCII sweep** of the five shipped files (README, llms.txt, CHANGELOG,
+  and the `Worker.js`/`Worker.d.ts` comments) per the CLAUDE.md source law:
+  em-dash, arrow, ellipsis, middot, and copyright glyphs replaced with their ASCII
+  equivalents (only U+00D7 and U+00B5 remain permitted, and neither is used).
+- **`VERSION` added to `llms.txt`** as the first entry of the Core API section,
+  matching `Worker.d.ts` and the three-place version contract.
+- **README blueprint-spine sections filled:** a table of contents, a Testing
+  section (29 `node:test` cases, the 10-tier `npm run torture` suite, `npm run
+  gate`), a "What this is not" section, and an Ecosystem section.
+- **llms.txt staleness fixed:** two notes claiming a SharedArrayBuffer mode was
+  "planned for v1.2.0" now say it shipped in v1.3.0, and the throughput figure
+  matches the regenerated range.
+- **Doc-surface audit vs `Worker.d.ts`:** confirmed README/llms.txt reflect the
+  real surface (`readInto`, `torn`, `published`, `mode`, `shared`, `VERSION`).
+
 ## [1.3.3] - 2026-08-09
 
 Contract release. Pins the two unstated rules W1's proof surfaced: the live-view
@@ -56,7 +97,8 @@ hot bodies are byte-for-byte unchanged.
 
 ### Deferred
 
-- W-07 and the doc allocation-number regeneration remain deferred to W3.
+- W-07 and the doc allocation-number regeneration (the W-01 doc surface) remain
+  deferred to W3. FIXED in 1.3.4.
 
 ## [1.3.2] - 2026-08-09
 
@@ -98,7 +140,7 @@ light over a hole (blueprint AR-02) into a proof.
 - **W-06** -- the shared-mode live-view lifetime is spot-checked in T3 but not yet
   pinned by name in both modes with docs; that is W2.
 - **W-07** -- README/llms.txt reference a `demos/` path (dir is `demo/`); fixed in
-  W3 with the doc-number regeneration.
+  W3 with the doc-number regeneration. FIXED in 1.3.4.
 - **W-10** -- the `lw:fc:sab` handshake does not yet guard
   `m.sab instanceof SharedArrayBuffer`, and `lw:fc:*` is undocumented as reserved;
   hardened + documented in W2.
@@ -159,35 +201,35 @@ These findings are recorded here and addressed in W1-W3:
   `m.sab instanceof SharedArrayBuffer`, and the `lw:fc:*` reserved namespace is
   undocumented. Hardened + documented in W2.
 - **W-07** -- README/llms.txt reference a `demos/` path; the directory is `demo/`.
-  Fixed in W3 alongside the doc-number regeneration.
+  Fixed in W3 alongside the doc-number regeneration. FIXED in 1.3.4.
 
 ## [1.3.0] - 2026-07-19
 
 ### Added
 
-- **Shared mode** — `frameChannel` can now put frames in a `SharedArrayBuffer`
+- **Shared mode** -- `frameChannel` can now put frames in a `SharedArrayBuffer`
   and publish them with an `Atomics` seqlock (bump the sequence odd, swing the
   published-slot index, bump it even). The producer writes one slot while the
   consumer reads another, so in steady state there is **no `postMessage` traffic
   on the data path at all**.
-  - `options.mode`: `"auto"` (default — take the shared path when it's available,
-    otherwise the transferable ring), `"shared"` (alias `"sab"` — require it, and
+  - `options.mode`: `"auto"` (default -- take the shared path when it's available,
+    otherwise the transferable ring), `"shared"` (alias `"sab"` -- require it, and
     throw rather than degrade), or `"transfer"` (always the ring).
   - Negotiated automatically: the producer allocates the SAB and hands it over
     through a reserved `lw:fc:sab` typed message; the consumer starts on the ring
-    and upgrades in place. Construction order doesn't matter — a consumer built
+    and upgrades in place. Construction order doesn't matter -- a consumer built
     later announces itself via `lw:fc:hello` and the producer re-sends. A
     handshake whose layout doesn't match is ignored.
   - Falls back transparently when `SharedArrayBuffer` is missing, the page isn't
     cross-origin isolated (`crossOriginIsolated === false`), or the transport has
     no typed plane. **The transferable ring stays the default.**
   - `channel.mode` / `channel.shared` report which transport is in use.
-- `consumer.readInto(dst)` — copies the freshest frame under the seqlock and
+- `consumer.readInto(dst)` -- copies the freshest frame under the seqlock and
   retries if a publish lands mid-copy, for when the data outlives the read.
   `consumer.torn` counts those retries. `read()` remains the allocation-free fast
   path and, in shared mode, returns a view onto live shared memory.
-- `producer.published` (shared mode) — total frames published.
-- `bench/gc-gate.mjs` (`npm run gate`) — the release gates, measured with
+- `producer.published` (shared mode) -- total frames published.
+- `bench/gc-gate.mjs` (`npm run gate`) -- the release gates, measured with
   `@zakkster/lite-gc-profiler`: a 10k-frame steady-state retention soak on the
   frame channel in both directions and both modes, a 200-cycle spawn/destroy
   orphan check (Blob URLs, worker threads), and a bundle guard (single JS file,
@@ -207,16 +249,16 @@ These findings are recorded here and addressed in W1-W3:
 
 ### Added
 
-- `handle.adoptCanvas(canvasEl, options?)` — `transferControlToOffscreen()` plus
+- `handle.adoptCanvas(canvasEl, options?)` -- `transferControlToOffscreen()` plus
   the two things that are easy to forget: **resize forwarding** (a `ResizeObserver`
   on the main-thread element posts device-pixel dimensions + `dpr` to the worker)
   and **visibility forwarding** (`visibilitychange` is posted so the worker's
   render loop auto-pauses when the tab is hidden). Returns a controller with
   `resize()`, `pause()`, `resume()`, and `dispose()`. Throws if the canvas does
   not support `transferControlToOffscreen`.
-- `ctx.onCanvas(cb, options?)` — worker-side counterpart. The callback receives
+- `ctx.onCanvas(cb, options?)` -- worker-side counterpart. The callback receives
   the transferred `OffscreenCanvas` and a `CanvasControl` with `width`/`height`/
-  `dpr`/`visible`, `onResize()`, `onVisibility()`, and `frame(fn, { fps? })` — a
+  `dpr`/`visible`, `onResize()`, `onVisibility()`, and `frame(fn, { fps? })` -- a
   render loop that prefers `requestAnimationFrame` (exposed on the worker global
   alongside OffscreenCanvas) for vsync pacing, falls back to a timer when it's
   absent or when a rate is given, and auto-pauses when the owning tab is hidden.
@@ -247,22 +289,22 @@ These findings are recorded here and addressed in W1-W3:
 
 ### Added
 
-- `frameChannel(transport, layout, options)` — a bounded, latest-wins frame
+- `frameChannel(transport, layout, options)` -- a bounded, latest-wins frame
   channel over the raw transport, plus `handle.frameChannel(layout, options)` and
   worker-side `ctx.frameChannel(layout, options)`. A fixed pool of pre-allocated
-  ArrayBuffers (default 2) ping-pongs producer→consumer and back via ownership
+  ArrayBuffers (default 2) ping-pongs producer->consumer and back via ownership
   transfer: no per-frame data allocation, no object clone, and memory that cannot
   grow. When the consumer falls behind, intermediate frames drop (latest-wins)
   rather than queueing.
-  - Producer: `produce(fill) → boolean` (false = dropped), `free`, `dispose()`.
-  - Consumer: `read() → view | null` (allocation-free; view cached until swap),
+  - Producer: `produce(fill) -> boolean` (false = dropped), `free`, `dispose()`.
+  - Consumer: `read() -> view | null` (allocation-free; view cached until swap),
     `hasNew`, `dropped`, `dispose()`.
   - Layout is a Float32 stride, `{ stride, capacity }`, or `{ bytes }`. The stride
     form matches lite-gl `LAYOUT` (POINT 8, QUAD/LINE 9) so a projected instance
     field crosses the worker boundary unmodified.
   - The frameChannel implementation is defined once and serialized into the
     worker runtime, so the two sides share a single source of truth.
-- `bench/frame-soak.mjs` — a fast-producer/slow-consumer soak that demonstrates
+- `bench/frame-soak.mjs` -- a fast-producer/slow-consumer soak that demonstrates
   the two guarantees empirically: the in-flight queue never exceeds the pool
   (bounded), and the heap does not grow across 100k hops (no leak).
 - Types for `frameChannel`, `FrameLayout`, `FrameChannelOptions`,
@@ -278,11 +320,11 @@ These findings are recorded here and addressed in W1-W3:
 
 ## [1.0.0] - 2026-07-16
 
-Initial release — the inline worker core.
+Initial release -- the inline worker core.
 
 ### Added
 
-- `defineWorker(moduleFn, options?)` — build a Worker from a self-contained
+- `defineWorker(moduleFn, options?)` -- build a Worker from a self-contained
   function via a Blob URL, with no separate file and no bundler configuration.
   Named export plus default export.
 - Two transports over one Worker, routed by a single `instanceof` check with no
@@ -312,6 +354,8 @@ Initial release — the inline worker core.
 - Phosphor oscilloscope demo: off-thread waveform synthesis with double-buffered
   transferable ping-pong and a zero-allocation render loop.
 
+[1.3.4]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.3.4
+[1.3.3]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.3.3
 [1.3.2]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.3.2
 [1.3.1]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.3.1
 [1.3.0]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.3.0

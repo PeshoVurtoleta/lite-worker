@@ -1,5 +1,5 @@
 /**
- * @zakkster/lite-worker — type declarations.
+ * @zakkster/lite-worker -- type declarations.
  * @copyright Zahary Shinikchiev
  */
 
@@ -65,7 +65,7 @@ export interface WorkerContext {
 
   /**
    * Build a bounded, latest-wins frame channel over this worker's raw transport.
-   * See {@link frameChannel}. One frame channel owns the raw stream — do not also
+   * See {@link frameChannel}. One frame channel owns the raw stream -- do not also
    * use {@link WorkerContext.send}/{@link WorkerContext.onRaw} directly while it
    * is live.
    */
@@ -124,7 +124,7 @@ export declare class WorkerHandle {
   /**
    * Typed request/response. Resolves with the worker's reply, or rejects if the
    * worker handler throws, there is no handler, the call times out, or the
-   * worker is terminated. Allocates per call — use {@link WorkerHandle.send}
+   * worker is terminated. Allocates per call -- use {@link WorkerHandle.send}
    * for per-frame traffic.
    */
   call<R = unknown>(type: string, data?: unknown, opts?: CallOptions): Promise<R>;
@@ -135,7 +135,7 @@ export declare class WorkerHandle {
 
   /**
    * Build a bounded, latest-wins frame channel over this handle's raw transport.
-   * See {@link frameChannel}. One frame channel owns the raw stream — do not also
+   * See {@link frameChannel}. One frame channel owns the raw stream -- do not also
    * use {@link WorkerHandle.send}/{@link WorkerHandle.onRaw} directly while it is
    * live. For a producer channel here, call {@link WorkerHandle.spawn} first.
    */
@@ -159,7 +159,7 @@ export declare class WorkerHandle {
 
   /**
    * Terminate the worker and reject all pending calls. The handle stays
-   * reusable — call {@link WorkerHandle.spawn} again to restart.
+   * reusable -- call {@link WorkerHandle.spawn} again to restart.
    */
   terminate(): this;
   /**
@@ -191,15 +191,15 @@ export interface FrameChannelOptions {
   role: "producer" | "consumer";
   /**
    * Transport for the frames.
-   *  - `"auto"` (default) — use the SharedArrayBuffer fast path when it's
+   *  - `"auto"` (default) -- use the SharedArrayBuffer fast path when it's
    *    available (cross-origin isolated, and the transport has `post`/`on`),
    *    otherwise fall back to the transferable ring transparently.
-   *  - `"shared"` (alias `"sab"`) — require the shared path; throws when it
+   *  - `"shared"` (alias `"sab"`) -- require the shared path; throws when it
    *    isn't available rather than silently degrading.
-   *  - `"transfer"` — always use the transferable ring.
+   *  - `"transfer"` -- always use the transferable ring.
    */
   mode?: "auto" | "shared" | "sab" | "transfer";
-  /** Pool size — the number of buffers that ping-pong (or shared slots). Default 2, minimum 2. */
+  /** Pool size -- the number of buffers that ping-pong (or shared slots). Default 2, minimum 2. */
   count?: number;
   /** Instance capacity, required when `layout` is a bare stride number. */
   capacity?: number;
@@ -233,7 +233,7 @@ export interface ProducerFrameChannel extends FrameChannelBase {
   /**
    * Fill the next free buffer via `fill(view, buffer)` and publish it. In
    * transferable mode this transfers the buffer and returns `false` when no
-   * buffer is free — the frame is dropped (latest-wins) and your loop advances.
+   * buffer is free -- the frame is dropped (latest-wins) and your loop advances.
    * In shared mode the writer always has a slot, so it returns `true` and an
    * unread frame is simply superseded in place. Either way nothing queues.
    */
@@ -249,8 +249,8 @@ export interface ConsumerFrameChannel extends FrameChannelBase {
   readonly role: "consumer";
   /**
    * The freshest frame's view, or `null` before the first frame arrives.
-   * Non-destructive and allocation-free — views are cached (one per slot in
-   * shared mode, one per buffer in transferable mode) — so it is safe to call
+   * Non-destructive and allocation-free -- views are cached (one per slot in
+   * shared mode, one per buffer in transferable mode) -- so it is safe to call
    * every animation frame. In shared mode the returned view aliases live shared
    * memory: consume it immediately, or use {@link ConsumerFrameChannel.readInto}
    * for a snapshot that cannot change underneath you.
@@ -359,7 +359,7 @@ export interface CanvasControl {
 
 /**
  * Create a worker from a self-contained module function. The function is
- * serialized into a Blob URL — no separate file, no bundler configuration. It
+ * serialized into a Blob URL -- no separate file, no bundler configuration. It
  * cannot reference anything from the enclosing scope and receives its channel
  * as the single `ctx` argument. The worker is created lazily on spawn().
  */

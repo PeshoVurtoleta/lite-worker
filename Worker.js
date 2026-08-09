@@ -13,7 +13,7 @@
  */
 
 /** Package version. Kept in three-place sync with package.json and CHANGELOG.md. */
-export const VERSION = "1.3.3";
+export const VERSION = "1.3.4";
 
 // Reused across every handle: an empty transfer list. postMessage reads it
 // synchronously, so a shared frozen instance is safe and allocates nothing.
@@ -131,7 +131,7 @@ self.onmessage = function (ev) {
 // ---------------------------------------------------------------------------
 // frameChannel: a bounded, latest-wins, ping-pong frame channel over the raw
 // transport. One pool of pre-allocated ArrayBuffers cycles producer->consumer
-// and back via ownership transfer — no per-frame data allocation, no structured
+// and back via ownership transfer -- no per-frame data allocation, no structured
 // clone of objects, and memory that cannot grow (the pool is fixed).
 //
 // Direction carries meaning, so no envelope/tag is needed: a raw buffer arriving
@@ -139,10 +139,10 @@ self.onmessage = function (ev) {
 // recycled buffer returning to the pool.
 //
 // SELF-CONTAINED. This function is serialized verbatim into the worker runtime
-// via .toString(), so it MUST NOT reference anything from module scope — only
+// via .toString(), so it MUST NOT reference anything from module scope -- only
 // its arguments and globals (ArrayBuffer, Float32Array, Uint8Array).
 //
-// `transport` is anything with { send(buffer, transfer?), onRaw(fn) -> off } —
+// `transport` is anything with { send(buffer, transfer?), onRaw(fn) -> off } --
 // both the main-side WorkerHandle and the worker-side ctx satisfy that shape.
 // ---------------------------------------------------------------------------
 function makeFrameChannel(transport, layout, options) {
@@ -211,7 +211,7 @@ function makeFrameChannel(transport, layout, options) {
   var useShared = wanted !== "transfer" && canShare && canTalk;
 
   // Shared-memory layout: a 4-slot Int32 header followed by `count` frame slots.
-  //   [0] SEQ    seqlock — even = stable, odd = a publish is in progress
+  //   [0] SEQ    seqlock -- even = stable, odd = a publish is in progress
   //   [1] PUB    index of the slot holding the newest published frame
   //   [2] FRAMES total frames published (lets a consumer spot missed frames)
   //   [3] reserved
@@ -283,7 +283,7 @@ function makeFrameChannel(transport, layout, options) {
       role: "producer", mode: "transfer", shared: false,
       kind: kind, stride: stride, capacity: capacity, byteLength: byteLength, count: count,
       // Fill the next free buffer via fill(view, buffer) and transfer it to the
-      // consumer. Returns false when no buffer is free — the frame is dropped and
+      // consumer. Returns false when no buffer is free -- the frame is dropped and
       // the caller's simulation simply advances to the next tick. Latest-wins.
       produce: function (fill) {
         if (disposed || free.length === 0) return false;
@@ -653,7 +653,7 @@ class WorkerHandle {
   // --- frame channel -------------------------------------------------------
 
   // Build a bounded, latest-wins frame channel over this handle's raw transport.
-  // One frame channel owns the raw stream — don't also use send()/onRaw()
+  // One frame channel owns the raw stream -- don't also use send()/onRaw()
   // directly while it is live. Typed post()/call()/on() remain free for control.
   // For a producer channel on the main thread, spawn() first (sends are no-ops
   // before spawn). The worker side uses ctx.frameChannel(layout, options).
@@ -772,7 +772,7 @@ class WorkerHandle {
     const s = this._h.get("error");
     if (s) s.forEach((fn) => fn(err));
     // A worker error (a load/parse failure, or an uncaught error) will never
-    // reply to an in-flight call — reject them now rather than let them hang to
+    // reply to an in-flight call -- reject them now rather than let them hang to
     // their timeout. Handler-level throws during a call are replied to
     // individually and don't reach here, so this only catches genuine failures.
     if (this._pending.size) {
@@ -803,7 +803,7 @@ export function defineWorker(moduleFn, options = {}) {
 
 /**
  * Build a bounded, latest-wins frame channel over a raw transport. `transport`
- * is a WorkerHandle (main thread) or the worker-side `ctx` — anything exposing
+ * is a WorkerHandle (main thread) or the worker-side `ctx` -- anything exposing
  * `send(buffer, transfer?)` and `onRaw(fn) -> off`.
  *
  * A fixed pool of `count` ArrayBuffers (default 2) ping-pongs between producer

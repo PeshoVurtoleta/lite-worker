@@ -26,6 +26,8 @@ There is ONE Worker with TWO transports, discriminated on receipt by a single
 
 ## Core API (main thread)
 
+- `VERSION: string` -- the package version constant, kept in three-place sync with
+  package.json and CHANGELOG.md. Named export from Worker.js.
 - `defineWorker(moduleFn, options?) -> WorkerHandle`
   - `moduleFn(ctx)` is `.toString()`-serialized into a Blob URL. It MUST be
     self-contained: it cannot close over module scope and cannot use bare `import`.
@@ -33,33 +35,33 @@ There is ONE Worker with TWO transports, discriminated on receipt by a single
     Default `type` is `"classic"` (widest Blob-worker support).
   - The Worker is created lazily on `spawn()`. Also available as the default export.
 - `WorkerHandle`:
-  - `spawn(): this` — create the Worker. Idempotent while spawned; throws if destroyed.
-  - `send(buffer, transfer?)` — raw transfer. When `transfer` is omitted the buffer
+  - `spawn(): this` -- create the Worker. Idempotent while spawned; throws if destroyed.
+  - `send(buffer, transfer?)` -- raw transfer. When `transfer` is omitted the buffer
     is auto-transferred (it DETACHES on the sender). No-op before spawn / after terminate.
-  - `onRaw(fn) -> off`, `offRaw(fn)` — raw buffers coming back from the worker.
-  - `post(type, data?, transfer?)` — fire-and-forget typed message.
-  - `call(type, data?, { transfer?, timeout? }?) -> Promise` — request/response.
+  - `onRaw(fn) -> off`, `offRaw(fn)` -- raw buffers coming back from the worker.
+  - `post(type, data?, transfer?)` -- fire-and-forget typed message.
+  - `call(type, data?, { transfer?, timeout? }?) -> Promise` -- request/response.
     Rejects on handler throw, missing handler, timeout, or terminate. Allocates.
-  - `on(type, fn) -> off`, `off(type, fn)` — typed pushes from the worker.
-  - `terminate(): this` — stop the worker, reject pending calls; handle stays re-spawnable.
-  - `destroy()` — idempotent full teardown; handle becomes unusable afterwards.
-  - `spawned`, `destroyed` — booleans.
+  - `on(type, fn) -> off`, `off(type, fn)` -- typed pushes from the worker.
+  - `terminate(): this` -- stop the worker, reject pending calls; handle stays re-spawnable.
+  - `destroy()` -- idempotent full teardown; handle becomes unusable afterwards.
+  - `spawned`, `destroyed` -- booleans.
 
 ## Worker-side context (`ctx`)
 
-Symmetric with the main side: `on(type, (data, reply?) => …)`, `off`, `onRaw`,
+Symmetric with the main side: `on(type, (data, reply?) => ...)`, `off`, `onRaw`,
 `offRaw`, `post`, `send`, `close()`. For a `call`, either invoke
 `reply(data, transfer?)` OR return a value / resolving promise (auto-replies when
 `reply` was not called). Throwing rejects the caller's promise.
 
 ## Ownership: the ping-pong
 
-`send(buf)` transfers, so `buf` is detached afterward — you no longer own it. The
+`send(buf)` transfers, so `buf` is detached afterward -- you no longer own it. The
 worker fills it and transfers it back to your `onRaw`. Hold TWO buffers and
 ping-pong them (one in flight, one being drawn/consumed) to keep both threads busy
 without allocating per frame.
 
-## frameChannel (v1.1.0) — bounded, latest-wins frame passing
+## frameChannel (v1.1.0) -- bounded, latest-wins frame passing
 
 `frameChannel(transport, layout, options)`; also `handle.frameChannel(layout, options)`
 and worker-side `ctx.frameChannel(layout, options)`. A fixed pool of pre-allocated
@@ -67,7 +69,7 @@ ArrayBuffers ping-pongs producer<->consumer via transfer: no per-frame data allo
 no clone, memory bounded by the pool. If the consumer falls behind, intermediate
 frames drop (latest-wins) instead of queueing.
 
-- `transport`: a WorkerHandle or worker `ctx` — anything with `{ send, onRaw }`.
+- `transport`: a WorkerHandle or worker `ctx` -- anything with `{ send, onRaw }`.
 - `layout`: a Float32 stride number (needs `options.capacity`), `{ stride, capacity }`,
   or `{ bytes }`. The stride form matches lite-gl `LAYOUT` (POINT 8, QUAD/LINE 9): a
   channel of `{ stride, capacity }` holds a `Float32Array(capacity*stride)`, so a
@@ -86,24 +88,24 @@ frames drop (latest-wins) instead of queueing.
   superseded in place), `free`, `published` (shared), `dispose()`.
 - Consumer: `read() -> Float32Array | Uint8Array | null` (non-destructive, views cached
   so it is allocation-free per rAF; in SHARED mode the view aliases live shared memory
-  — consume it immediately), `readInto(dst) -> boolean` (seqlock-checked tear-free copy,
+  -- consume it immediately), `readInto(dst) -> boolean` (seqlock-checked tear-free copy,
   retries if a publish lands mid-copy), `hasNew`, `dropped`, `torn` (shared), `dispose()`.
 - Live-view boundary (both modes): the view read() returns is valid for exactly
   `count - 1` further produce() calls and is overwritten on the count-th (the pool
   wraps back to that slot). Structural to a fixed pool -- do NOT hold it across a yield;
   use readInto(dst) for data that must outlive the read.
 - Both expose `role`, `kind` ("f32"|"bytes"), `stride`, `capacity`, `byteLength`, `count`.
-- Wire protocol: direction carries meaning (no tag/envelope) — a raw buffer at the
+- Wire protocol: direction carries meaning (no tag/envelope) -- a raw buffer at the
   consumer is a fresh frame; at the producer it is a recycle. So a frameChannel OWNS
   the raw `send`/`onRaw` stream: don't also use them directly while it is live. The
   typed `post`/`call`/`on` plane stays free for control.
 - Allocation floor: data is transferred (zero copy) and envelope-free; the only
   hot-path cost is one typed-array header per buffer hop (transfer mints a new
   ArrayBuffer identity each hop, so views can't cross the boundary cached). `read()`
-  itself allocates nothing. A SharedArrayBuffer-backed zero-header mode is planned
-  for v1.2.0 (needs COOP/COEP).
+  itself allocates nothing. A SharedArrayBuffer-backed zero-header mode shipped in
+  v1.3.0 (needs COOP/COEP); see "Shared mode" below.
 
-## Shared mode (v1.3.0) — SharedArrayBuffer + Atomics seqlock
+## Shared mode (v1.3.0) -- SharedArrayBuffer + Atomics seqlock
 
 Opt-in fast path for frameChannel. Layout: a 4-slot Int32 header
 [SEQ, PUB, FRAMES, reserved] followed by `count` frame slots. Publish = write the
@@ -121,11 +123,13 @@ changed SEQ knows it raced.
   and cross-origin embeds must send CORP/CORS. A real deployment tax; opt in knowingly.
 - Feature-detected: falls back to the transferable ring when SAB is missing,
   crossOriginIsolated === false, or the transport has no typed plane. Ring is default.
-- Measured: ~1.36x throughput vs the ring. NOTE retention is NOT lower — the ring's
-  per-hop view header is transient garbage, not retained, so a surviving-allocation
-  gate reads ~0 for both. The win is throughput + no message traffic, not retained bytes.
+- Measured (`npm run gate`, 2026-08-09): shared runs typically ~1.3-2.1x the ring's
+  throughput across runs (machine- and load-dependent, not a fixed figure). NOTE
+  retention is NOT lower -- the ring's per-hop view
+  header is transient garbage, not retained, so a surviving-allocation gate reads
+  ~0-0.28 B/frame for both. The win is throughput + no message traffic, not retained bytes.
 
-## adoptCanvas (v1.2.0) — OffscreenCanvas with resize + visibility handled
+## adoptCanvas (v1.2.0) -- OffscreenCanvas with resize + visibility handled
 
 `handle.adoptCanvas(canvasEl, options?)` (main) transfers the canvas to the worker
 via transferControlToOffscreen and forwards the two things people forget: resize
@@ -136,16 +140,16 @@ if the canvas lacks transferControlToOffscreen. `options`: `{ maxDpr?=2 }`.
 `ctx.onCanvas(cb, options?)` (worker) receives it: `cb(canvas, ctl)` runs once with
 the OffscreenCanvas and a control `ctl`:
 - `ctl.canvas`, `ctl.width`, `ctl.height`, `ctl.dpr`, `ctl.visible`.
-- `ctl.onResize((w, h, dpr) => …)` — fired after canvas.width/height is applied.
-- `ctl.onVisibility((visible) => …)`.
-- `ctl.frame(fn, { fps?, interval? })` — a render loop that prefers requestAnimationFrame
+- `ctl.onResize((w, h, dpr) => ...)` -- fired after canvas.width/height is applied.
+- `ctl.onVisibility((visible) => ...)`.
+- `ctl.frame(fn, { fps?, interval? })` -- a render loop that prefers requestAnimationFrame
   (exposed on the worker global alongside OffscreenCanvas; vsync-paced), falling back
   to a timer when it's absent or when a rate is given. AUTO-PAUSES when the owning tab
   is hidden. `fn` gets a delta time (ms). Returns a stop fn.
 - `ctl.pause()`, `ctl.resume()`, `ctl.dispose()`.
 
 Uses reserved `lw:canvas*` typed message types (don't send those yourself). When
-the worker both produces and draws, frames never cross back — no frameChannel is
+the worker both produces and draws, frames never cross back -- no frameChannel is
 involved; that is the point. frameChannel is for frames that must reach the main
 thread or another worker; adoptCanvas is for when the worker owns the pixels.
 
@@ -157,7 +161,7 @@ thread or another worker; adoptCanvas is for when the worker owns the pixels.
 - Transferables, not SharedArrayBuffer: the raw transport (and frameChannel, built
   on it) uses transfer semantics and needs NO cross-origin isolation (no COOP/COEP).
   Raw payloads must be an ArrayBuffer or an ArrayBuffer view. A SharedArrayBuffer
-  frameChannel mode is planned for v1.2.0.
+  frameChannel mode shipped in v1.3.0 (opt-in, needs COOP/COEP); see "Shared mode".
 - No Blob URL leak: the object URL is revoked immediately after the Worker is
   constructed (the script is already fetched by then), so short-lived workers do
   not pile up object URLs. `destroy()` still frees the worker thread.
@@ -166,19 +170,19 @@ thread or another worker; adoptCanvas is for when the worker owns the pixels.
 
 - DO use `send`/`onRaw` for anything that runs every frame.
 - DO use `post`/`call`/`on` for setup, configuration, and occasional RPC.
-- DON'T use `call` inside a frame loop — it allocates.
-- DON'T reference outer variables inside `moduleFn` — serialization drops them.
-- DON'T reuse a buffer after `send()` — it has been transferred away.
+- DON'T use `call` inside a frame loop -- it allocates.
+- DON'T reference outer variables inside `moduleFn` -- serialization drops them.
+- DON'T reuse a buffer after `send()` -- it has been transferred away.
 - DO use `frameChannel` instead of hand-rolling the ping-pong for per-frame data;
   check `produce()`'s return (false = dropped) and drive `read()` from your rAF.
 - DON'T mix direct `send`/`onRaw` with a live `frameChannel` on the same transport.
 
 ## Files
 
-- Worker.js — single-file ESM source (exports `defineWorker`, `frameChannel`, default export, `WorkerHandle`; methods `handle.frameChannel`, `handle.adoptCanvas`; worker-side `ctx.frameChannel`, `ctx.onCanvas`).
-- Worker.d.ts — full strict TypeScript declarations.
-- demos/oscilloscope.html — off-thread waveform synthesis; tab 1 dogfoods `frameChannel` (worker produces, main draws, latest-wins), tab 2 dogfoods `adoptCanvas` (worker draws to a transferred canvas, main idle).
-- bench/frame-soak.mjs — fast-producer/slow-consumer soak proving bounded memory + latest-wins (not shipped in the npm tarball).
-- bench/gc-gate.mjs — release gates via @zakkster/lite-gc-profiler: 10k-frame retention soak (both directions, both modes), spawn/destroy orphan check, bundle guard. `npm run gate`.
+- Worker.js -- single-file ESM source (exports `defineWorker`, `frameChannel`, default export, `WorkerHandle`; methods `handle.frameChannel`, `handle.adoptCanvas`; worker-side `ctx.frameChannel`, `ctx.onCanvas`).
+- Worker.d.ts -- full strict TypeScript declarations.
+- demo/oscilloscope.html -- off-thread waveform synthesis; tab 1 dogfoods `frameChannel` (worker produces, main draws, latest-wins), tab 2 dogfoods `adoptCanvas` (worker draws to a transferred canvas, main idle).
+- bench/frame-soak.mjs -- fast-producer/slow-consumer soak proving bounded memory + latest-wins (not shipped in the npm tarball).
+- bench/gc-gate.mjs -- release gates via @zakkster/lite-gc-profiler: 10k-frame retention soak (both directions, both modes), spawn/destroy orphan check, bundle guard. `npm run gate`.
 
-License: MIT © Zahary Shinikchiev
+License: MIT (c) Zahary Shinikchiev
