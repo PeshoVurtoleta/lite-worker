@@ -254,6 +254,12 @@ export interface ConsumerFrameChannel extends FrameChannelBase {
    * every animation frame. In shared mode the returned view aliases live shared
    * memory: consume it immediately, or use {@link ConsumerFrameChannel.readInto}
    * for a snapshot that cannot change underneath you.
+   *
+   * Live-view boundary (both modes): the returned view stays valid for exactly
+   * `count - 1` further `produce()` calls and is overwritten on the `count`-th,
+   * when the pool wraps back to the slot it points at. This is structural to a
+   * fixed pool -- do not hold the view across a yield; use
+   * {@link ConsumerFrameChannel.readInto} for data that must outlive the read.
    */
   read(): Float32Array | Uint8Array | null;
   /**

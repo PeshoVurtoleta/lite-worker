@@ -5,6 +5,59 @@ All notable changes to `@zakkster/lite-worker` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-08-09
+
+Contract release. Pins the two unstated rules W1's proof surfaced: the live-view
+lifetime a renderer may rely on (W-06) and the trust the SAB handshake extends to
+an incoming typed message (W-10). The only `Worker.js` logic change is one clause
+in the one-time `lw:fc:sab` handshake handler; the `produce`/`read`/`readInto`
+hot bodies are byte-for-byte unchanged.
+
+### Added
+
+- **Torture T4 -- adversarial backpressure.** Producer:consumer ratios 1:1,
+  1000:1, 1:1000; bursty bursts; `count` 2/3/8; a `fill` that throws (the pool
+  stays intact and the buffer returns to `free`); dispose mid-flight from each
+  side. After each run the conservation invariant holds and `produced + dropped`
+  accounts for every tick. Runs over the in-process loopback transport (no real
+  thread needed).
+- **Torture T8 -- lite-gl LAYOUT stride conformance.** Local stride constants
+  mirroring lite-gl (POINT 8, QUAD/LINE 9 -- no runtime dependency) drive a
+  channel; asserts `view.length === capacity * stride`, that `i * stride`
+  indexing survives the channel boundary unmodified, and that a projected
+  instance field round-trips bit-for-bit in BOTH transfer and shared mode.
+- **Torture T9 controls for T4/T8.** A spoofed-handshake control (a plain
+  `ArrayBuffer` posted as `lw:fc:sab` with matching byteLength/count) proves the
+  W-10 guard is what blocks the attach -- without it the same message would
+  upgrade the consumer to shared. A T4 conservation control leaks a buffer per
+  hop and MUST fail the conservation assertion. T4/T8 flip from `pending` to
+  `run`.
+- **`decisions/0001-frame-channel-contract.md`.** Records W-06 (document the
+  live-view boundary as inherent to a fixed pool; do NOT add a `count`-aware
+  helper) and W-10 (handshake fails closed on a non-SharedArrayBuffer; `lw:fc:*`
+  is a reserved namespace).
+
+### Changed
+
+- **W-10 -- handshake fails closed.** The `lw:fc:sab` handler now rejects any
+  `sab` that is not a real `SharedArrayBuffer`, so a spoofed handshake with
+  matching byteLength/count but a plain `ArrayBuffer` leaves the consumer on the
+  transferable ring (`mode === "transfer"`, `shared === false`). The distinct
+  layout-mismatch return stays on its own line.
+
+### Documentation
+
+- **W-06 -- live-view boundary documented.** `Worker.d.ts`, `README.md`, and
+  `llms.txt` now state that `read()`'s view is valid for exactly `count - 1`
+  further `produce()` calls and is overwritten on the next, and direct holders to
+  `readInto` for retention across a yield. `lw:fc:sab`/`lw:fc:hello` are now
+  called out as a reserved namespace ("don't send them yourself"), matching the
+  `lw:canvas*` note.
+
+### Deferred
+
+- W-07 and the doc allocation-number regeneration remain deferred to W3.
+
 ## [1.3.2] - 2026-08-09
 
 Proof release. No runtime behaviour changes to `Worker.js` -- only the

@@ -481,3 +481,78 @@ test("26. SAB mode: explicit selection + graceful fallback", async () => {
   }
   void ct;
 });
+
+// --- 27. W-10: fail-closed lw:fc:sab handshake ------------------------------
+test("27. W-10: spoofed ArrayBuffer handshake stays on the ring; a real SharedArrayBuffer attaches", { skip: !SAB_OK }, async () => {
+  const stride = 4, capacity = 4, count = 2;
+  const byteLength = capacity * stride * 4;
+  const meta = (sab) => ({ sab, stride, capacity, kind: "f32", count, byteLength });
+
+  // Positive control: a real SharedArrayBuffer with a matching layout DOES
+  // attach through the identical path -- proves the attach mechanism is live
+  // so the negative control below isn't meaningless.
+  {
+    const [pt, ct] = pairTyped();
+    const cons = frameChannel(ct, { stride, capacity }, { role: "consumer", mode: "auto", count });
+    assert.equal(cons.mode, "transfer", "consumer starts on the ring before any handshake");
+    pt.post("lw:fc:sab", meta(new SharedArrayBuffer(16 + count * byteLength)));
+    await tick();
+    assert.equal(cons.mode, "shared", "a real SharedArrayBuffer handshake upgrades the consumer");
+    assert.equal(cons.shared, true, "shared flag is true after a real attach");
+    cons.dispose();
+  }
+
+  // Negative control (W-10): a spoofed plain ArrayBuffer carrying a matching
+  // byteLength/count must be rejected by the `instanceof SharedArrayBuffer`
+  // guard -- the consumer stays on the transferable ring.
+  {
+    const [pt, ct] = pairTyped();
+    const cons = frameChannel(ct, { stride, capacity }, { role: "consumer", mode: "auto", count });
+    pt.post("lw:fc:sab", meta(new ArrayBuffer(16 + count * byteLength)));
+    await tick();
+    assert.equal(cons.mode, "transfer", "a spoofed plain ArrayBuffer handshake does NOT attach (W-10 fail-closed)");
+    assert.equal(cons.shared, false, "shared flag stays false after a spoofed handshake");
+    cons.dispose();
+  }
+});
+
+// --- 28. W-06: live-view boundary --------------------------------------------
+// read()'s view stays coherent for exactly count-1 further produce() calls and
+// is overwritten on the count-th, at the documented default count=2 -- mirrors
+// the ROADMAP W-06 reproduction (count=2: held view 100 -> 300 after 2
+// publishes) in both transfer and shared mode.
+test("28. W-06: live-view coherent for count-1 publishes, overwritten on the count-th", async () => {
+  // Transfer mode (default transport needs no typed plane).
+  {
+    const count = 2;
+    const [pt, ct] = pair();
+    const prod = frameChannel(pt, { stride: 4, capacity: 1 }, { role: "producer", mode: "transfer", count });
+    const cons = frameChannel(ct, { stride: 4, capacity: 1 }, { role: "consumer", mode: "transfer", count });
+    prod.produce((f) => { f[0] = 100; }); await tick();
+    const held = cons.read();
+    assert.equal(held[0], 100, "transfer: initial live view holds the first published value");
+    prod.produce((f) => { f[0] = 200; }); await tick(); // count-1 = 1 further publish
+    assert.equal(held[0], 100, "transfer: live view still coherent after count-1 further publishes");
+    prod.produce((f) => { f[0] = 300; }); await tick(); // count-th further publish
+    assert.equal(held[0], 300, "transfer: live view overwritten on the count-th further publish");
+    prod.dispose(); cons.dispose();
+  }
+
+  // Shared mode: same boundary, over live shared memory.
+  if (SAB_OK) {
+    const count = 2;
+    const [pt, ct] = pairTyped();
+    const prod = frameChannel(pt, { stride: 4, capacity: 1 }, { role: "producer", mode: "shared", count });
+    const cons = frameChannel(ct, { stride: 4, capacity: 1 }, { role: "consumer", mode: "shared", count });
+    await tick();
+    assert.equal(cons.mode, "shared", "shared negotiation succeeded before the boundary check");
+    prod.produce((f) => { f[0] = 100; });
+    const held = cons.read();
+    assert.equal(held[0], 100, "shared: initial live view holds the first published value");
+    prod.produce((f) => { f[0] = 200; }); // count-1 = 1 further publish
+    assert.equal(held[0], 100, "shared: live view still coherent after count-1 further publishes");
+    prod.produce((f) => { f[0] = 300; }); // count-th further publish
+    assert.equal(held[0], 300, "shared: live view overwritten on the count-th further publish");
+    prod.dispose(); cons.dispose();
+  }
+});

@@ -1,6 +1,6 @@
 {
   "name": "@zakkster/lite-worker",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Zero-GC per-frame worker channel. Define a worker inline from a function, message it with transferables, keep the main thread clean at 60fps. Zero dependencies, single file.",
   "type": "module",
   "main": "./Worker.js",

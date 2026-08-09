@@ -13,7 +13,7 @@
  */
 
 /** Package version. Kept in three-place sync with package.json and CHANGELOG.md. */
-export const VERSION = "1.3.2";
+export const VERSION = "1.3.3";
 
 // Reused across every handle: an empty transfer list. postMessage reads it
 // synchronously, so a shared frozen instance is safe and allocates nothing.
@@ -319,7 +319,11 @@ function makeFrameChannel(transport, layout, options) {
   var offSab = null;
   if (wanted !== "transfer" && canTalk) {
     offSab = transport.on("lw:fc:sab", function (m) {
-      if (disposed || hdr || !m || !m.sab) return;
+      // Fail closed: `lw:fc:*` is a reserved namespace, but the typed plane is
+      // shared, so a spoofed message could carry a plain ArrayBuffer as `sab`.
+      // Only a real SharedArrayBuffer earns the upgrade; anything else stays on
+      // the transferable ring.
+      if (disposed || hdr || !m || !m.sab || !(m.sab instanceof SharedArrayBuffer)) return;
       if (m.byteLength !== byteLength || (m.count | 0) !== count) return; // layout mismatch: stay on transfer
       attachShared(m.sab);
       if (off) { off(); off = null; }   // the raw path is no longer used

@@ -4,11 +4,10 @@
 // to stdout on success (exit 0) and a diagnostic + exit 1 on any failure. Tier
 // progress and the gate summary go to stderr so stdout stays clean.
 //
-// Wired this session (W0): T0 (channel laws), T1 (degenerate layouts), T2
-// (lifecycle abuse), T6 (zero-retention gate), T7 (soak + conservation + leak),
-// T9 (controls). Registered as pending placeholders for later sessions: T3
-// (real-thread seqlock, W1), T4 (backpressure, W2), T5 (differential fuzz, W1),
-// T8 (LAYOUT conformance, W2).
+// Tiers: T0 (channel laws), T1 (degenerate layouts), T2 (lifecycle abuse), T3
+// (real-thread seqlock, W1), T4 (adversarial backpressure, W2), T5 (differential
+// fuzz, W1), T6 (zero-retention gate), T7 (soak + conservation + leak), T8
+// (lite-gl LAYOUT conformance, W2), T9 (controls). No pending placeholders remain.
 //
 // Every gate ships a T9 control that MUST report failure; a gate that cannot
 // fail is decorative (W-01 was the limiting case -- a gate that never ran).
@@ -20,6 +19,7 @@ import { defineWorker, frameChannel } from "../Worker.js";
 import {
   mockRegistry,
   syncPair,
+  pair,
   xorshift32,
   settle,
   makeTracker,
@@ -48,6 +48,10 @@ const metrics = {
 // the control exercises the exact check the tier relies on.
 const boundedOk = (inFlight, count) => inFlight <= count;
 const conservationOk = (free, count) => free === count;
+// Transferable-ring conservation at rest: every one of the `count` distinct
+// buffers is either free to write or held by the consumer as display -- none
+// leaked, none duplicated. Used by the T4 tier AND the T9 leaking-pool control.
+const poolConservedOk = (free, held, count) => free + held === count;
 
 function fail(msg, op) {
   const e = new Error(msg);
@@ -705,6 +709,273 @@ async function t9() {
     log("    T9 seqlock-control: ops=" + r.ops + " readInto-snaps=" + r.snaps + " torn-frames-caught=" + r.bad);
     if (r.bad === 0) throw fail("T9: stripped-seqlock producer never tore a readInto snapshot -- the tear gate is decorative");
   }
+
+  // T4 conservation control: model a pool that leaks one buffer per hop -- free +
+  // held never returns to count. This drives the SAME poolConservedOk predicate
+  // the T4 tier relies on; if a leak still satisfied it, the conservation gate
+  // would be decorative. (A genuinely leaking pool would need a broken
+  // makeFrameChannel, so -- as with the T0/T7 controls -- we drive the predicate.)
+  {
+    const count = 4;
+    let held = 1, free = count - 1; // consumer holds one as display, rest free
+    free -= 1;                      // one buffer leaked, never recycled
+    if (poolConservedOk(free, held, count)) throw fail("T9: leaking-pool control passed the T4 conservation check (decorative)");
+  }
+
+  // W-10 spoofed-handshake control: `lw:fc:*` is reserved, but the typed plane is
+  // shared, so a spoofed lw:fc:sab could carry a plain ArrayBuffer with a matching
+  // byteLength/count. It MUST be rejected -- the consumer stays on the ring. The
+  // positive half posts a REAL SharedArrayBuffer through the identical path to
+  // prove the attach mechanism is live, so the negative half proves the guard is
+  // the only thing blocking the spoof. Remove the W-10 guard and this exits 1.
+  if (SAB_OK) {
+    const stride = 8, capacity = 16, count = 2;
+    const bl = capacity * stride * 4;
+    const meta = (sab) => ({ sab, stride, capacity, kind: "f32", count, byteLength: bl });
+
+    // Positive: a real SAB with matching layout DOES attach (attach path is live).
+    {
+      const [pt, ct] = syncPair(true);
+      const cons = frameChannel(ct, { stride, capacity }, { role: "consumer", mode: "auto", count });
+      if (cons.mode !== "transfer") throw fail("T9 spoof: consumer did not start on the ring (mode=" + cons.mode + ")");
+      pt.post("lw:fc:sab", meta(new SharedArrayBuffer(16 + count * bl)));
+      if (cons.mode !== "shared") throw fail("T9 spoof-control: a real SharedArrayBuffer handshake did not attach -- the attach path is broken, the negative control is meaningless");
+      cons.dispose();
+    }
+
+    // Negative: a spoofed plain ArrayBuffer with matching byteLength/count MUST be
+    // rejected by the W-10 guard; the consumer stays on the ring.
+    {
+      const [pt, ct] = syncPair(true);
+      const cons = frameChannel(ct, { stride, capacity }, { role: "consumer", mode: "auto", count });
+      pt.post("lw:fc:sab", meta(new ArrayBuffer(16 + count * bl)));
+      if (cons.mode !== "transfer") throw fail("T9 spoof-control: a plain ArrayBuffer handshake attached (mode=" + cons.mode + ") -- the W-10 fail-closed guard is missing/decorative");
+      if (cons.shared) throw fail("T9 spoof-control: spoofed handshake set shared=true");
+      cons.dispose();
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// T4 -- adversarial backpressure (W2). Producer:consumer speed ratios, bursty
+// pacing, count 2/3/8, a fill that throws (pool stays intact), and dispose
+// mid-flight from each side. After each: conservation holds and every produce
+// tick is accounted as either a sent frame or a source drop. Runs over the
+// in-process loopback ring (like T0/T2) -- no real thread needed; the async
+// `pair()` transport gives genuine in-flight buffers so produce() can drop at
+// source, which the synchronous ring cannot exhibit (it recycles in lockstep).
+// ---------------------------------------------------------------------------
+async function t4() {
+  const drain = () => new Promise((r) => setTimeout(r, 0));
+  const rand = xorshift32(SEED ^ 0x744b7000);
+
+  // (1) Conservation + tick accounting across speed ratios x counts, over the
+  // async ring. Every sent buffer is delivered exactly once (delivered === sent),
+  // and at rest free + held === count.
+  const ratios = [
+    { name: "1:1", prod: 1, read: 1 },
+    { name: "1000:1", prod: 1000, read: 1 },
+    { name: "1:1000", prod: 1, read: 1000 },
+  ];
+  for (const count of [2, 3, 8]) {
+    for (const ratio of ratios) {
+      const [pt, ct] = pair();
+      const prod = frameChannel(pt, { stride: 8, capacity: 16 }, { role: "producer", mode: "transfer", count });
+      let delivered = 0;
+      const cons = frameChannel(ct, { stride: 8, capacity: 16 }, {
+        role: "consumer", mode: "transfer", count, onFrame: () => { delivered++; }
+      });
+      let v = 0;
+      const fill = (f) => { f[0] = v; };
+      let ticks = 0, sent = 0, sourceDropped = 0;
+      for (let r = 0; r < 8; r++) {
+        for (let p = 0; p < ratio.prod; p++) {
+          v++; ticks++;
+          if (prod.produce(fill)) sent++; else sourceDropped++;
+          if (prod.free > count) throw fail("T4 bounded: free=" + prod.free + " > count=" + count + " [" + ratio.name + "]", ticks);
+          if (prod.free < 0) throw fail("T4: negative free " + prod.free, ticks);
+        }
+        await drain();
+        for (let c = 0; c < ratio.read; c++) cons.read();
+        await drain();
+      }
+      await drain();
+      if (sent + sourceDropped !== ticks) throw fail("T4 accounting: sent(" + sent + ")+dropped(" + sourceDropped + ") != ticks(" + ticks + ") [" + ratio.name + " count=" + count + "]");
+      if (delivered !== sent) throw fail("T4: delivered(" + delivered + ") != sent(" + sent + ") -- a frame was lost or duplicated on the wire [" + ratio.name + " count=" + count + "]");
+      if (ratio.prod > count && sourceDropped === 0) throw fail("T4: burst " + ratio.name + " count=" + count + " never dropped at source -- backpressure not exercised (decorative)");
+      const held = cons.read() !== null ? 1 : 0;
+      if (!poolConservedOk(prod.free, held, count)) throw fail("T4 conservation: free(" + prod.free + ")+held(" + held + ") != count(" + count + ") [" + ratio.name + "]");
+      prod.dispose(); cons.dispose();
+      if (prod.free !== 0) throw fail("T4: dispose did not zero producer free (" + prod.free + ") [" + ratio.name + "]");
+    }
+  }
+
+  // (2) Bursty random pacing: random-size produce bursts, random read counts,
+  // random drain points. Conservation + accounting must survive the chaos.
+  {
+    const count = 3;
+    const [pt, ct] = pair();
+    const prod = frameChannel(pt, { stride: 8, capacity: 8 }, { role: "producer", mode: "transfer", count });
+    let delivered = 0;
+    const cons = frameChannel(ct, { stride: 8, capacity: 8 }, {
+      role: "consumer", mode: "transfer", count, onFrame: () => { delivered++; }
+    });
+    let v = 0;
+    const fill = (f) => { f[0] = v; };
+    let ticks = 0, sent = 0, sourceDropped = 0;
+    for (let r = 0; r < 64; r++) {
+      const burst = 1 + ((rand() * 20) | 0);
+      for (let p = 0; p < burst; p++) { v++; ticks++; if (prod.produce(fill)) sent++; else sourceDropped++; }
+      if (prod.free > count) throw fail("T4 bursty bounded: free=" + prod.free + " > count=" + count, ticks);
+      if (rand() < 0.5) await drain();
+      const reads = (rand() * 5) | 0;
+      for (let c = 0; c < reads; c++) cons.read();
+      if (rand() < 0.5) await drain();
+    }
+    await drain();
+    if (sent + sourceDropped !== ticks) throw fail("T4 bursty accounting: " + sent + "+" + sourceDropped + " != " + ticks);
+    if (delivered !== sent) throw fail("T4 bursty: delivered(" + delivered + ") != sent(" + sent + ")");
+    const held = cons.read() !== null ? 1 : 0;
+    if (!poolConservedOk(prod.free, held, count)) throw fail("T4 bursty conservation: free(" + prod.free + ")+held(" + held + ") != count(" + count + ")");
+    prod.dispose(); cons.dispose();
+  }
+
+  // (3) A fill that throws: the buffer returns to `free`, the pool stays intact,
+  // and a subsequent normal produce still works. Synchronous ring for determinism.
+  for (const count of [2, 3, 8]) {
+    const [pt, ct] = syncPair(false);
+    const prod = frameChannel(pt, { stride: 8, capacity: 4 }, { role: "producer", mode: "transfer", count });
+    const cons = frameChannel(ct, { stride: 8, capacity: 4 }, { role: "consumer", mode: "transfer", count });
+    if (prod.free !== count) throw fail("T4 throw: fresh free " + prod.free + " != count " + count);
+    let threw = false;
+    try { prod.produce(() => { throw new Error("boom"); }); }
+    catch (e) { threw = e.message === "boom"; }
+    if (!threw) throw fail("T4 throw: throwing fill did not propagate");
+    if (prod.free !== count) throw fail("T4 throw: pool not intact after throw (free=" + prod.free + " != count=" + count + ")");
+    let v = 0;
+    if (!prod.produce((f) => { f[0] = ++v; })) throw fail("T4 throw: normal produce failed after a throwing fill (count=" + count + ")");
+    if (!cons.read()) throw fail("T4 throw: consumer read null after a good produce");
+    prod.dispose(); cons.dispose();
+  }
+
+  // (4) Dispose mid-flight from each side: buffers on the wire when dispose lands
+  // must not crash the drain, and the disposed side is inert afterwards.
+  {
+    const count = 4;
+    const [pt, ct] = pair();
+    const prod = frameChannel(pt, { stride: 8, capacity: 8 }, { role: "producer", mode: "transfer", count });
+    const cons = frameChannel(ct, { stride: 8, capacity: 8 }, { role: "consumer", mode: "transfer", count });
+    let v = 0;
+    const fill = (f) => { f[0] = ++v; };
+    for (let p = 0; p < count; p++) prod.produce(fill);  // fill the wire, undrained
+    prod.dispose();                                      // dispose mid-flight
+    await drain();                                       // deliveries land post-dispose
+    if (prod.free !== 0) throw fail("T4 dispose(prod): free not zeroed (" + prod.free + ")");
+    if (prod.produce(fill)) throw fail("T4 dispose(prod): produce succeeded after dispose");
+    cons.dispose();
+  }
+  {
+    const count = 4;
+    const [pt, ct] = pair();
+    const prod = frameChannel(pt, { stride: 8, capacity: 8 }, { role: "producer", mode: "transfer", count });
+    const cons = frameChannel(ct, { stride: 8, capacity: 8 }, { role: "consumer", mode: "transfer", count });
+    let v = 0;
+    const fill = (f) => { f[0] = ++v; };
+    for (let p = 0; p < count; p++) prod.produce(fill);
+    cons.dispose();                                      // dispose mid-flight
+    await drain();
+    if (cons.read() !== null) throw fail("T4 dispose(cons): read non-null after dispose");
+    prod.dispose();
+  }
+
+  // (5) Shared-mode backpressure parity: the writer never starves (produce always
+  // true) yet drops are still counted, and conservation is free === count.
+  if (SAB_OK) {
+    for (const count of [2, 3, 8]) {
+      const [pt, ct] = syncPair(true);
+      const prod = frameChannel(pt, { stride: 8, capacity: 16 }, { role: "producer", mode: "shared", count });
+      const cons = frameChannel(ct, { stride: 8, capacity: 16 }, { role: "consumer", mode: "shared", count });
+      if (prod.mode !== "shared" || cons.mode !== "shared") throw fail("T4 shared: negotiation failed (count=" + count + ")");
+      let v = 0;
+      const fill = (f) => { f[0] = ++v; };
+      let ticks = 0, sent = 0;
+      prod.produce(fill); cons.read();                  // seed lastFrame for drop accounting
+      for (let i = 0; i < 5000; i++) {
+        ticks++; if (prod.produce(fill)) sent++;
+        if ((i & 63) === 0) cons.read();
+      }
+      if (sent !== ticks) throw fail("T4 shared: writer starved (sent " + sent + " != ticks " + ticks + ", count=" + count + ")");
+      if (prod.free !== count) throw fail("T4 shared conservation: free(" + prod.free + ") != count(" + count + ")");
+      cons.read();
+      if (cons.dropped <= 0) throw fail("T4 shared: no drops counted under a 64:1 read ratio (count=" + count + ")");
+      prod.dispose(); cons.dispose();
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// T8 -- cross-package LAYOUT stride conformance (W2). lite-gl instance layouts
+// have a fixed float stride per primitive; a frame channel must carry them with
+// `i * stride` indexing intact across the boundary. There is NO lite-gl runtime
+// dependency (zero deps), so the strides are local constants that MIRROR lite-gl.
+// Asserts view.length === capacity * stride, that per-instance indexing survives
+// the hop unmodified, and that a projected field round-trips bit-for-bit in BOTH
+// transfer and shared mode.
+// ---------------------------------------------------------------------------
+async function t8() {
+  // Mirrors lite-gl LAYOUT: POINT packs 8 floats/instance, QUAD and LINE 9.
+  const POINT = 8, QUAD = 9, LINE = 9;
+  if (LINE !== QUAD) throw fail("T8: LINE/QUAD stride constants drifted");
+  const capacity = 64;
+  // A float with a full mantissa, so a truncated/reinterpreted lane is caught.
+  const probe = Math.fround(Math.PI);
+  const bitsOf = (x) => { const a = new Float32Array(1); a[0] = x; return new Uint32Array(a.buffer)[0]; };
+  const probeBits = bitsOf(probe);
+
+  const check = (stride, typed, mode) => {
+    const [pt, ct] = syncPair(typed);
+    const prod = frameChannel(pt, { stride, capacity }, { role: "producer", mode, count: 3 });
+    const cons = frameChannel(ct, { stride, capacity }, { role: "consumer", mode, count: 3 });
+    if (prod.mode !== mode || cons.mode !== mode) throw fail("T8: negotiated " + prod.mode + "/" + cons.mode + " not " + mode + " (stride " + stride + ")");
+    if (prod.stride !== stride) throw fail("T8: stride drifted (" + prod.stride + " != " + stride + ")");
+    if (prod.capacity !== capacity) throw fail("T8: capacity drifted (" + prod.capacity + " != " + capacity + ")");
+    if (prod.byteLength !== capacity * stride * 4) throw fail("T8: byteLength " + prod.byteLength + " != capacity*stride*4 (" + (capacity * stride * 4) + ")");
+
+    // Fill every lane with its own flat index (< 2^24, exact in f32) and pin the
+    // producer-side view length to capacity * stride.
+    let producerViewLen = -1;
+    prod.produce((view) => {
+      producerViewLen = view.length;
+      for (let i = 0; i < capacity; i++) {
+        for (let f = 0; f < stride; f++) view[i * stride + f] = i * stride + f;
+      }
+    });
+    if (producerViewLen !== capacity * stride) throw fail("T8: producer view.length " + producerViewLen + " != capacity*stride " + (capacity * stride) + " (mode " + mode + ")");
+
+    const got = cons.read();
+    if (!got) throw fail("T8: consumer read null (mode " + mode + ")");
+    if (got.length !== capacity * stride) throw fail("T8: consumer view.length " + got.length + " != capacity*stride " + (capacity * stride) + " (mode " + mode + ")");
+    for (let i = 0; i < capacity; i++) {
+      for (let f = 0; f < stride; f++) {
+        const want = i * stride + f;
+        if (got[i * stride + f] !== want) throw fail("T8: lane [" + i + "*" + stride + "+" + f + "]=" + got[i * stride + f] + " != " + want + " (mode " + mode + ")", i);
+      }
+    }
+
+    // Projected instance field round-trips bit-for-bit: zero the frame, set one
+    // field of one instance, and compare the raw f32 bits after the hop.
+    const inst = 7, field = 3;
+    prod.produce((view) => { for (let k = 0; k < view.length; k++) view[k] = 0; view[inst * stride + field] = probe; });
+    const got2 = cons.read();
+    if (!got2) throw fail("T8: consumer read null on the projection frame (mode " + mode + ")");
+    if (bitsOf(got2[inst * stride + field]) !== probeBits) throw fail("T8: projected field bits " + bitsOf(got2[inst * stride + field]) + " != " + probeBits + " (mode " + mode + ")");
+
+    prod.dispose(); cons.dispose();
+  };
+
+  check(POINT, false, "transfer");
+  check(QUAD, false, "transfer");
+  if (SAB_OK) { check(POINT, true, "shared"); check(QUAD, true, "shared"); }
 }
 
 // ---------------------------------------------------------------------------
@@ -717,11 +988,11 @@ const TIERS = [
   { name: "T1", run: t1 },
   { name: "T2", run: t2 },
   { name: "T3", run: t3 },
-  { name: "T4", pending: "backpressure (W2)" },
+  { name: "T4", run: t4 },
   { name: "T5", run: t5 },
   { name: "T6", run: t6 },
   { name: "T7", run: t7 },
-  { name: "T8", pending: "LAYOUT conformance (W2)" },
+  { name: "T8", run: t8 },
   { name: "T9", run: t9 },
 ];
 

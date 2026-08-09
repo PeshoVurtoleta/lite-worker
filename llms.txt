@@ -88,6 +88,10 @@ frames drop (latest-wins) instead of queueing.
   so it is allocation-free per rAF; in SHARED mode the view aliases live shared memory
   — consume it immediately), `readInto(dst) -> boolean` (seqlock-checked tear-free copy,
   retries if a publish lands mid-copy), `hasNew`, `dropped`, `torn` (shared), `dispose()`.
+- Live-view boundary (both modes): the view read() returns is valid for exactly
+  `count - 1` further produce() calls and is overwritten on the count-th (the pool
+  wraps back to that slot). Structural to a fixed pool -- do NOT hold it across a yield;
+  use readInto(dst) for data that must outlive the read.
 - Both expose `role`, `kind` ("f32"|"bytes"), `stride`, `capacity`, `byteLength`, `count`.
 - Wire protocol: direction carries meaning (no tag/envelope) — a raw buffer at the
   consumer is a fresh frame; at the producer it is a recycle. So a frameChannel OWNS
@@ -110,6 +114,9 @@ changed SEQ knows it raced.
 - Zero postMessage traffic on the data path in steady state.
 - Handshake rides reserved typed messages `lw:fc:sab` (producer -> consumer, carries
   the SAB + layout) and `lw:fc:hello` (consumer -> producer, "re-send, I was late").
+  `lw:fc:*` is a reserved namespace -- don't send those types yourself. The consumer
+  fails closed: a `lw:fc:sab` whose `sab` is not a real SharedArrayBuffer is rejected
+  and the consumer stays on the transferable ring.
 - Requires cross-origin isolation in browsers: COOP: same-origin + COEP: require-corp,
   and cross-origin embeds must send CORP/CORS. A real deployment tax; opt in knowingly.
 - Feature-detected: falls back to the transferable ring when SAB is missing,
