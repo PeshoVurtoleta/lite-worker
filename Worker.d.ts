@@ -3,7 +3,7 @@
  * @copyright Zahary Shinikchiev
  */
 
-/** Package version. Kept in three-place sync with package.json and CHANGELOG.md. */
+/** Package version (1.4.0). Kept in three-place sync with package.json and CHANGELOG.md. */
 export declare const VERSION: string;
 
 /** Options passed to {@link defineWorker}. */
@@ -275,6 +275,10 @@ export interface ConsumerFrameChannel extends FrameChannelBase {
   readonly dropped: number;
   /** Shared mode only: reads that raced an in-flight publish and retried. */
   readonly torn: number;
+  /** transfer: frames arrived on the ring; shared: frames seen at last read (read-driven, not publish-driven). 0 before any activity. */
+  readonly received: number;
+  /** shared: FRAMES seq value at the last read; transfer: mirrors `received`. -1 before the first. */
+  readonly lastFrame: number;
 }
 
 export type FrameChannel = ProducerFrameChannel | ConsumerFrameChannel;

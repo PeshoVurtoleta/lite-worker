@@ -26,8 +26,8 @@ There is ONE Worker with TWO transports, discriminated on receipt by a single
 
 ## Core API (main thread)
 
-- `VERSION: string` -- the package version constant, kept in three-place sync with
-  package.json and CHANGELOG.md. Named export from Worker.js.
+- `VERSION: string` -- the package version constant (currently `"1.4.0"`), kept in
+  three-place sync with package.json and CHANGELOG.md. Named export from Worker.js.
 - `defineWorker(moduleFn, options?) -> WorkerHandle`
   - `moduleFn(ctx)` is `.toString()`-serialized into a Blob URL. It MUST be
     self-contained: it cannot close over module scope and cannot use bare `import`.
@@ -89,7 +89,23 @@ frames drop (latest-wins) instead of queueing.
 - Consumer: `read() -> Float32Array | Uint8Array | null` (non-destructive, views cached
   so it is allocation-free per rAF; in SHARED mode the view aliases live shared memory
   -- consume it immediately), `readInto(dst) -> boolean` (seqlock-checked tear-free copy,
-  retries if a publish lands mid-copy), `hasNew`, `dropped`, `torn` (shared), `dispose()`.
+  retries if a publish lands mid-copy), `hasNew`, `dropped`, `torn` (shared), `received`,
+  `lastFrame`, `dispose()`.
+- Consumer telemetry (v1.4.0): `received` and `lastFrame` mirror the producer's
+  `published`/`free`. In TRANSFER mode `received` is arrival-driven -- one count per
+  raw frame past the byteLength guard, so `received == frames delivered to onFrame ==
+  frames the producer sent` -- and `lastFrame` mirrors it (both `-1`/`0` before the
+  first arrival). In SHARED mode there is no arrival event, so `received` is
+  READ-DRIVEN: it reports the frames seen as of the last `read()`/`readInto()`, NOT the
+  frames published -- it is not a delivery or drift counter (use the producer's
+  `published`, or `dropped`, for that). `lastFrame` is the `FRAMES` seqlock value at the
+  last read (`-1` before the first). Both fail closed: `0`/`-1` before any activity,
+  never `null`.
+- Layout `{ bytes }` alignment: a byte channel uses `Uint8Array` views, which need no
+  alignment, so ANY positive byte length is legal -- including odd, non-multiple-of-4
+  lengths (e.g. `{ bytes: 7 }`). In shared mode the Int32 header is aligned at offset 0
+  and slot views stay byte-addressable, so an odd byte length is legal there too. Stride
+  (`f32`) layouts are `capacity * stride * 4` bytes by construction and are always 4-aligned.
 - Live-view boundary (both modes): the view read() returns is valid for exactly
   `count - 1` further produce() calls and is overwritten on the count-th (the pool
   wraps back to that slot). Structural to a fixed pool -- do NOT hold it across a yield;

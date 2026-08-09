@@ -556,3 +556,107 @@ test("28. W-06: live-view coherent for count-1 publishes, overwritten on the cou
     prod.dispose(); cons.dispose();
   }
 });
+
+// --- 29. W4: consumer telemetry (transfer) -- sentinels, per-arrival count,
+// dispose-during-onFrame, duplicate dispose ----------------------------------
+test("29. W4: consumer telemetry (transfer) -- sentinels, arrival count, dispose-during-onFrame", async () => {
+  const [a, b] = pair();
+  const prod = frameChannel(a, 4, { role: "producer", mode: "transfer", capacity: 1, count: 2 });
+  let disposeSeenAt = -1;
+  const cons = frameChannel(b, 4, { role: "consumer", mode: "transfer", capacity: 1, count: 2, onFrame: () => {
+    // dispose-during-iteration: onFrame runs synchronously *inside* onRaw, mid-
+    // delivery, after the received++ guard but before the handler returns.
+    if (cons.received === 3 && disposeSeenAt === -1) { disposeSeenAt = cons.received; cons.dispose(); }
+  } });
+
+  assert.equal(cons.received, 0, "0: received sentinel before any arrival");
+  assert.equal(cons.lastFrame, -1, "0: lastFrame sentinel before any arrival");
+  assert.equal(typeof cons.received, "number", "received is always a number, never null/undefined");
+  assert.equal(typeof cons.lastFrame, "number", "lastFrame is always a number, never null/undefined");
+  assert.ok(!Number.isNaN(cons.received) && !Number.isNaN(cons.lastFrame), "getters are never NaN");
+
+  for (let i = 0; i < 5; i++) { prod.produce((f) => { f[0] = i; }); await tick(); }
+
+  assert.equal(disposeSeenAt, 3, "dispose() fired from inside onFrame on the 3rd arrival (N-1 of the 5-frame burst)");
+  assert.equal(cons.received, 3, "received stops counting once dispose() detaches onRaw mid-delivery");
+  assert.equal(cons.lastFrame, 3, "lastFrame mirrors received in transfer mode");
+
+  // duplicate dispose
+  cons.dispose(); cons.dispose();
+  assert.equal(cons.received, 3, "duplicate dispose() does not reset or null out received");
+  assert.equal(cons.lastFrame, 3, "duplicate dispose() does not reset or null out lastFrame");
+  assert.notEqual(cons.received, null, "received is never null after dispose");
+  assert.notEqual(cons.lastFrame, undefined, "lastFrame is never undefined after dispose");
+});
+
+// --- 30. W4: consumer telemetry (transfer) -- re-entrant produce() ----------
+// A fill() callback that itself calls produce() again (re-entrant write into
+// the same pool, before the outer produce()'s own send()/return completes).
+// Every hop must still land as exactly one `received` count -- none lost,
+// none double-counted -- and the pool must stay conserved (free+held=count).
+test("30. W4: re-entrant produce() -- each nested write counted once, pool conserved", async () => {
+  const count = 2;
+  const [a, b] = pair();
+  const prod = frameChannel(a, 4, { role: "producer", mode: "transfer", capacity: 1, count });
+  const cons = frameChannel(b, 4, { role: "consumer", mode: "transfer", capacity: 1, count });
+
+  let reentered = false;
+  const outerOk = prod.produce((f) => {
+    f[0] = 1;
+    if (!reentered) {
+      reentered = true;
+      const innerOk = prod.produce((f2) => { f2[0] = 2; }); // re-entrant write
+      assert.equal(innerOk, true, "nested produce() from inside fill() succeeds");
+    }
+  });
+  assert.equal(outerOk, true, "outer produce() still succeeds after a nested re-entrant produce()");
+  assert.equal(prod.free, 0, "pool is fully drained by the two re-entrant produces (count=2)");
+
+  await tick();
+  assert.equal(cons.received, 2, "both the outer and the re-entrant frame are each counted exactly once");
+  assert.equal(cons.lastFrame, 2, "lastFrame mirrors the re-entrant-safe received count");
+  const held = cons.read() !== null ? 1 : 0;
+  assert.equal(prod.free + held, count, "pool conserved after a re-entrant write burst (free+held=count)");
+  prod.dispose(); cons.dispose();
+});
+
+// --- 31. W4: consumer telemetry (shared) -- read-driven, not delivery-driven ---
+// Documents the getter semantics that are unique to shared mode: `received`/
+// `lastFrame` advance only on read(), never on arrival, and hold their sentinel
+// through the async SAB handshake window (adversarial: querying getters before
+// the handshake microtask has even run).
+test("31. W4: consumer telemetry (shared) -- read-driven sentinels, not delivery-driven", { skip: !SAB_OK }, async () => {
+  const [pt, ct] = pairTyped();
+  const prod = frameChannel(pt, { stride: 4, capacity: 1 }, { role: "producer" });
+  const cons = frameChannel(ct, { stride: 4, capacity: 1 }, { role: "consumer" });
+
+  // Adversarial: read the getters mid-handshake, before the SAB has attached.
+  assert.equal(cons.mode, "transfer", "consumer is still on the ring before the handshake microtask runs");
+  assert.equal(cons.received, 0, "0: received sentinel holds during the pre-handshake window");
+  assert.equal(cons.lastFrame, -1, "-1: lastFrame sentinel holds during the pre-handshake window");
+
+  await tick();
+  assert.equal(cons.mode, "shared", "handshake completed: consumer upgraded to shared mode");
+  assert.equal(cons.received, 0, "0: received sentinel unchanged immediately after the shared upgrade (no read yet)");
+  assert.equal(cons.lastFrame, -1, "-1: lastFrame sentinel unchanged immediately after the shared upgrade (no read yet)");
+
+  for (let i = 0; i < 5; i++) prod.produce((f) => { f[0] = i; }); // N=5 publishes, zero reads
+  assert.equal(cons.received, 0, "arrival alone never advances received in shared mode (read-driven, not delivery-driven)");
+  assert.equal(cons.lastFrame, -1, "arrival alone never advances lastFrame in shared mode");
+
+  cons.read(); // first read: jumps directly to the current FRAMES seq, not +1
+  assert.equal(cons.received, 5, "received snapshots the FRAMES seq at the first read, not an incremental delivery count");
+  assert.equal(cons.lastFrame, 5, "lastFrame mirrors the FRAMES seq at the first read");
+
+  prod.produce((f) => { f[0] = 99; });
+  prod.produce((f) => { f[0] = 100; }); // two more publishes, still unread
+  cons.read();
+  assert.equal(cons.received, 7, "a later read jumps straight to the new FRAMES seq (skips intermediate unread publishes)");
+  assert.equal(cons.lastFrame, 7, "lastFrame tracks the same read-driven snapshot");
+
+  cons.dispose(); cons.dispose(); // duplicate dispose must not throw
+  assert.equal(typeof cons.received, "number", "received stays a number after duplicate dispose in shared mode");
+  assert.equal(typeof cons.lastFrame, "number", "lastFrame stays a number after duplicate dispose in shared mode");
+  assert.ok(!Number.isNaN(cons.received) && !Number.isNaN(cons.lastFrame), "getters never go NaN after dispose");
+  prod.dispose();
+});

@@ -5,6 +5,44 @@ All notable changes to `@zakkster/lite-worker` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-08-09
+
+Consumer telemetry parity. The producer side has exposed `published`/`free` since
+v1.3.0; the consumer now surfaces the matching arrival/read counters. The only
+`Worker.js` logic change is one `received++` int in the transferable-ring `onRaw`
+swap (post byteLength-guard, pre-swap) plus two cold getters -- the
+`produce`/`read`/`readInto` hot bodies are byte-for-byte unchanged and still
+retain under the 8 B/frame gate (`major=0` both modes).
+
+### Added
+
+- **`consumer.received`** -- a frame counter with per-mode meaning. In the
+  transferable ring it is arrival-driven: one increment per raw frame that clears
+  the byteLength guard, so `received` equals the frames delivered to `onFrame` and
+  the frames the producer sent (proven by torture T4 across all nine
+  ratio x count cases). In shared mode there is no arrival event, so it is
+  **read-driven**: it reports the frames observed as of the last `read()`/
+  `readInto()`, not the frames published -- it is NOT a delivery or drift counter.
+  `0` before any activity, never `null`.
+- **`consumer.lastFrame`** -- shared mode: the `FRAMES` seqlock value at the last
+  read (`-1` before the first read). Transfer mode: mirrors `received` (`-1`
+  before the first arrival).
+- **Torture T4 -- received/delivered/sent parity.** The backpressure tier now
+  asserts `received === delivered === sent` across every ratio x count case via a
+  shared `receivedOk` predicate; a matching T9 control drives that predicate with
+  a frozen `received` and MUST catch it, so the parity gate cannot be decorative.
+
+### Documentation
+
+- **`{bytes}` alignment contract pinned.** A `{ bytes }` channel uses `Uint8Array`
+  views, which need no alignment: any positive byte length is legal (including
+  odd, non-multiple-of-4 lengths), and in shared mode the Int32 header is aligned
+  at offset 0 while slot views stay byte-addressable. This has always been true
+  (torture T1 pins `{bytes:7}` and shared `{bytes:6}`); it is now stated in
+  `llms.txt` and the README so it is not mistaken for a bug. No code change.
+- **Consumer telemetry surface** documented in `Worker.d.ts`, `README.md`, and
+  `llms.txt`, including the shared-mode read-driven caveat.
+
 ## [1.3.4] - 2026-08-09
 
 Doc-truth release. No `Worker.js`/`Worker.d.ts` executable-code changes -- only the
@@ -354,6 +392,7 @@ Initial release -- the inline worker core.
 - Phosphor oscilloscope demo: off-thread waveform synthesis with double-buffered
   transferable ping-pong and a zero-allocation render loop.
 
+[1.4.0]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.4.0
 [1.3.4]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.3.4
 [1.3.3]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.3.3
 [1.3.2]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.3.2

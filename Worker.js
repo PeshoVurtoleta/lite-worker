@@ -13,7 +13,7 @@
  */
 
 /** Package version. Kept in three-place sync with package.json and CHANGELOG.md. */
-export const VERSION = "1.3.4";
+export const VERSION = "1.4.0";
 
 // Reused across every handle: an empty transfer list. postMessage reads it
 // synchronously, so a shared frozen instance is safe and allocates nothing.
@@ -309,6 +309,7 @@ function makeFrameChannel(transport, layout, options) {
   var view = null;           // cached view over `display`, rebuilt only on swap
   var readSinceSwap = true;
   var dropped = 0;
+  var received = 0;          // transfer mode: raw frames arrived (onRaw swaps)
   var onFrame = typeof opts.onFrame === "function" ? opts.onFrame : null;
   var lastFrame = -1;        // shared mode: last FRAMES counter observed
   var torn = 0;              // shared mode: reads that lost the seqlock race
@@ -336,6 +337,7 @@ function makeFrameChannel(transport, layout, options) {
     if (disposed || hdr) return;
     var ab = buf instanceof ArrayBuffer ? buf : (buf && buf.buffer) || null;
     if (!ab || ab.byteLength !== byteLength) return;
+    received++;                        // one raw frame arrived (post-guard, pre-swap)
     if (display !== null) {
       if (!readSinceSwap) dropped++;   // previous frame never read before supersede
       transport.send(display);         // recycle the old display back to producer
@@ -402,6 +404,14 @@ function makeFrameChannel(transport, layout, options) {
     get dropped() { return dropped; },
     /** Shared mode only: reads that raced an in-flight publish and retried. */
     get torn() { return torn; },
+    // Consumer telemetry. transfer: frames arrived on the ring (arrival-driven).
+    // shared: frames observed as of the last read (read-driven, NOT publish-driven --
+    // it only advances when you read, so it is not a delivery/drift counter). 0
+    // before any activity, never null.
+    get received() { return hdr ? (lastFrame < 0 ? 0 : lastFrame) : received; },
+    // shared: FRAMES seq value at the last read (-1 before the first read).
+    // transfer: mirrors `received` (-1 before the first arrival).
+    get lastFrame() { return hdr ? lastFrame : (received === 0 ? -1 : received); },
     dispose: function () {
       if (disposed) return;
       disposed = true;

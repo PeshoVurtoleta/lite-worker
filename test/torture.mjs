@@ -52,6 +52,11 @@ const conservationOk = (free, count) => free === count;
 // buffers is either free to write or held by the consumer as display -- none
 // leaked, none duplicated. Used by the T4 tier AND the T9 leaking-pool control.
 const poolConservedOk = (free, held, count) => free + held === count;
+// Consumer telemetry parity: the transfer-ring `received` counter must equal the
+// frames delivered to onFrame AND the frames the producer sent -- one arrival per
+// hop, none lost, duplicated, or miscounted. Used by the T4 tier AND the T9
+// stubbed-telemetry control.
+const receivedOk = (received, delivered, sent) => received === delivered && delivered === sent;
 
 function fail(msg, op) {
   const e = new Error(msg);
@@ -722,6 +727,19 @@ async function t9() {
     if (poolConservedOk(free, held, count)) throw fail("T9: leaking-pool control passed the T4 conservation check (decorative)");
   }
 
+  // T4 received-parity control: the consumer's `received` counter must track every
+  // arrival. A stubbed/frozen `received` (a fixed value that never counts a hop --
+  // exactly what reverting the onRaw `received++` produces) MUST fail the SAME
+  // receivedOk predicate the T4 tier relies on. If a frozen counter still satisfied
+  // it, the telemetry-parity gate would be decorative. (A genuinely miscounting
+  // consumer would need a broken onRaw, so -- as with the T0/T7 controls -- we
+  // drive the predicate directly.)
+  {
+    const delivered = 8, sent = 8;
+    const stubbedReceived = 0;   // frozen at 0: never counts an arrival
+    if (receivedOk(stubbedReceived, delivered, sent)) throw fail("T9: stubbed `received` passed the T4 telemetry-parity check (decorative)");
+  }
+
   // W-10 spoofed-handshake control: `lw:fc:*` is reserved, but the typed plane is
   // shared, so a spoofed lw:fc:sab could carry a plain ArrayBuffer with a matching
   // byteLength/count. It MUST be rejected -- the consumer stays on the ring. The
@@ -801,7 +819,7 @@ async function t4() {
       }
       await drain();
       if (sent + sourceDropped !== ticks) throw fail("T4 accounting: sent(" + sent + ")+dropped(" + sourceDropped + ") != ticks(" + ticks + ") [" + ratio.name + " count=" + count + "]");
-      if (delivered !== sent) throw fail("T4: delivered(" + delivered + ") != sent(" + sent + ") -- a frame was lost or duplicated on the wire [" + ratio.name + " count=" + count + "]");
+      if (!receivedOk(cons.received, delivered, sent)) throw fail("T4: received(" + cons.received + ")/delivered(" + delivered + ")/sent(" + sent + ") disagree -- a frame was lost, duplicated, or miscounted on the wire [" + ratio.name + " count=" + count + "]");
       if (ratio.prod > count && sourceDropped === 0) throw fail("T4: burst " + ratio.name + " count=" + count + " never dropped at source -- backpressure not exercised (decorative)");
       const held = cons.read() !== null ? 1 : 0;
       if (!poolConservedOk(prod.free, held, count)) throw fail("T4 conservation: free(" + prod.free + ")+held(" + held + ") != count(" + count + ") [" + ratio.name + "]");
