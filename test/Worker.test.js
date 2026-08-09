@@ -1,8 +1,18 @@
 // Loopback test harness. Mocks Blob/URL/Worker so the *actual* serialized
 // worker runtime (and the user module fn) runs in-process, wired to the
 // main-side handle through microtask-queued postMessage in both directions.
-// This exercises real code on both sides — envelope discrimination, reply
-// correlation, raw transport, lifecycle — without a browser.
+// This exercises real code on both sides -- envelope discrimination, reply
+// correlation, raw transport, lifecycle -- without a browser.
+//
+// Runner: node:test (node --test). Assertions via node:assert/strict.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+// Capture the native URL before the loopback mock below shadows it, so the
+// version-sync test can still resolve package.json.
+const NativeURL = globalThis.URL;
 
 const sources = new Map(); // url -> source string
 let urlN = 0;
@@ -40,14 +50,8 @@ globalThis.Worker = class Worker {
   terminate() { this._terminated = true; }
 };
 
-const { defineWorker, frameChannel } = await import("../Worker.js");
+const { defineWorker, frameChannel, VERSION } = await import("../Worker.js");
 
-let pass = 0, fail = 0;
-const results = [];
-function ok(name, cond) {
-  if (cond) { pass++; results.push("  ok   " + name); }
-  else { fail++; results.push("  FAIL " + name); }
-}
 async function throws(fn, match) {
   try { await fn(); return false; }
   catch (e) { return match ? String(e.message).includes(match) : true; }
@@ -82,164 +86,170 @@ function pairTyped() {
 
 const SAB_OK = typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "undefined";
 
+// --- 0. version sync -------------------------------------------------------
+test("0. VERSION matches package.json version (three-place sync)", () => {
+  const pkg = JSON.parse(readFileSync(new NativeURL("../package.json", import.meta.url), "utf8"));
+  assert.equal(VERSION, pkg.version, "VERSION === package.json version");
+});
+
 // --- 1. lifecycle basics ---------------------------------------------------
-{
+test("1. lifecycle basics", () => {
   const h = defineWorker((ctx) => { ctx.on("noop", () => {}); });
-  ok("not spawned before spawn()", h.spawned === false);
+  assert.ok(h.spawned === false, "not spawned before spawn()");
   const same = h.spawn();
-  ok("spawn() returns handle", same === h);
-  ok("spawned after spawn()", h.spawned === true);
-  ok("spawn() idempotent", h.spawn() === h && h.spawned === true);
+  assert.ok(same === h, "spawn() returns handle");
+  assert.ok(h.spawned === true, "spawned after spawn()");
+  assert.ok(h.spawn() === h && h.spawned === true, "spawn() idempotent");
   h.destroy();
-}
+});
 
 // --- 2. post -> worker -> push back ----------------------------------------
-{
+test("2. post round-trips through worker push", async () => {
   const h = defineWorker((ctx) => { ctx.on("ping", (n) => ctx.post("pong", n + 1)); }).spawn();
   const p = once(h, "pong");
   h.post("ping", 41);
-  ok("post round-trips through worker push", (await p) === 42);
+  assert.ok((await p) === 42, "post round-trips through worker push");
   h.destroy();
-}
+});
 
 // --- 3. call: explicit reply -----------------------------------------------
-{
+test("3. call: explicit reply", async () => {
   const h = defineWorker((ctx) => { ctx.on("add", (d, reply) => reply(d.a + d.b)); }).spawn();
-  ok("call() resolves with explicit reply", (await h.call("add", { a: 2, b: 3 })) === 5);
+  assert.ok((await h.call("add", { a: 2, b: 3 })) === 5, "call() resolves with explicit reply");
   h.destroy();
-}
+});
 
 // --- 4. call: sync return auto-reply ---------------------------------------
-{
+test("4. call: sync return auto-reply", async () => {
   const h = defineWorker((ctx) => { ctx.on("mul", (d) => d.a * d.b); }).spawn();
-  ok("call() auto-replies from sync return", (await h.call("mul", { a: 4, b: 5 })) === 20);
+  assert.ok((await h.call("mul", { a: 4, b: 5 })) === 20, "call() auto-replies from sync return");
   h.destroy();
-}
+});
 
 // --- 5. call: async return auto-reply --------------------------------------
-{
+test("5. call: async return auto-reply", async () => {
   const h = defineWorker((ctx) => { ctx.on("slow", async (d) => d * 2); }).spawn();
-  ok("call() auto-replies from async return", (await h.call("slow", 21)) === 42);
+  assert.ok((await h.call("slow", 21)) === 42, "call() auto-replies from async return");
   h.destroy();
-}
+});
 
 // --- 6. call: handler throws -> reject --------------------------------------
-{
+test("6. call: handler throws rejects", async () => {
   const h = defineWorker((ctx) => { ctx.on("boom", () => { throw new Error("kaboom"); }); }).spawn();
-  ok("call() rejects when handler throws", await throws(() => h.call("boom"), "kaboom"));
+  assert.ok(await throws(() => h.call("boom"), "kaboom"), "call() rejects when handler throws");
   h.destroy();
-}
+});
 
 // --- 7. call: no handler -> reject ------------------------------------------
-{
+test("7. call: no handler rejects", async () => {
   const h = defineWorker((ctx) => { ctx.on("known", () => 1); }).spawn();
-  ok("call() rejects with no handler", await throws(() => h.call("unknown"), "no handler"));
+  assert.ok(await throws(() => h.call("unknown"), "no handler"), "call() rejects with no handler");
   h.destroy();
-}
+});
 
 // --- 8. call: timeout -------------------------------------------------------
-{
+test("8. call: timeout", async () => {
   const h = defineWorker((ctx) => { ctx.on("hang", () => undefined); }).spawn();
-  ok("call() times out", await throws(() => h.call("hang", null, { timeout: 40 }), "timed out"));
+  assert.ok(await throws(() => h.call("hang", null, { timeout: 40 }), "timed out"), "call() times out");
   h.destroy();
-}
+});
 
 // --- 9. raw transport both directions --------------------------------------
-{
+test("9. raw transport both directions", async () => {
   const h = defineWorker((ctx) => {
     ctx.onRaw((buf) => { const v = new Uint8Array(buf.buffer || buf); v[0] = v[0] + 1; ctx.send(v); });
   }).spawn();
   const p = onceRaw(h);
   h.send(new Uint8Array([7]));
   const got = await p;
-  ok("raw send()/onRaw() round-trips", new Uint8Array(got.buffer || got)[0] === 8);
+  assert.ok(new Uint8Array(got.buffer || got)[0] === 8, "raw send()/onRaw() round-trips");
   h.destroy();
-}
+});
 
 // --- 10. unsubscribe --------------------------------------------------------
-{
+test("10. unsubscribe stops delivery", async () => {
   const h = defineWorker((ctx) => { ctx.on("e", () => ctx.post("f", 1)); }).spawn();
   let hits = 0;
   const off = h.on("f", () => { hits++; });
   h.post("e"); await tick();
   off();
   h.post("e"); await tick();
-  ok("on() unsubscribe stops delivery", hits === 1);
+  assert.ok(hits === 1, "on() unsubscribe stops delivery");
   h.destroy();
-}
+});
 
 // --- 11. terminate rejects pending, handle reusable ------------------------
-{
+test("11. terminate rejects pending, handle reusable", async () => {
   const h = defineWorker((ctx) => { ctx.on("hang", () => undefined); }).spawn();
   const p = h.call("hang");
   const rejected = throws(() => p, "terminated");
   h.terminate();
-  ok("terminate() rejects pending calls", await rejected);
-  ok("terminate() leaves handle re-spawnable", h.spawned === false && h.destroyed === false);
+  assert.ok(await rejected, "terminate() rejects pending calls");
+  assert.ok(h.spawned === false && h.destroyed === false, "terminate() leaves handle re-spawnable");
   h.spawn();
-  ok("re-spawn() works after terminate()", h.spawned === true);
+  assert.ok(h.spawned === true, "re-spawn() works after terminate()");
   h.destroy();
-}
+});
 
 // --- 12. destroy idempotent + guards ---------------------------------------
-{
+test("12. destroy idempotent + guards", async () => {
   const h = defineWorker((ctx) => { ctx.on("x", () => {}); }).spawn();
   h.destroy();
   let threw = false;
   try { h.destroy(); } catch { threw = true; }
-  ok("destroy() is idempotent", threw === false && h.destroyed === true);
-  ok("spawn() after destroy throws", await throws(() => { h.spawn(); }, "destroyed"));
-  ok("post() after destroy is a no-op", (() => { h.post("x", 1); return true; })());
-  ok("send() after destroy is a no-op", (() => { h.send(new Uint8Array([1])); return true; })());
-  ok("call() after destroy rejects", await throws(() => h.call("x"), "destroyed"));
-}
+  assert.ok(threw === false && h.destroyed === true, "destroy() is idempotent");
+  assert.ok(await throws(() => { h.spawn(); }, "destroyed"), "spawn() after destroy throws");
+  assert.ok((() => { h.post("x", 1); return true; })(), "post() after destroy is a no-op");
+  assert.ok((() => { h.send(new Uint8Array([1])); return true; })(), "send() after destroy is a no-op");
+  assert.ok(await throws(() => h.call("x"), "destroyed"), "call() after destroy rejects");
+});
 
 // --- 13. defineWorker guards ------------------------------------------------
-{
+test("13. defineWorker guards", () => {
   let threw = false;
   try { defineWorker(123); } catch (e) { threw = e instanceof TypeError; }
-  ok("defineWorker(non-fn) throws TypeError", threw);
-}
+  assert.ok(threw, "defineWorker(non-fn) throws TypeError");
+});
 
 // --- 14. frameChannel: validation ------------------------------------------
-{
+test("14. frameChannel: validation", async () => {
   const [t] = pair();
-  ok("frameChannel bad role throws", await throws(() => frameChannel(t, 8, { role: "x", capacity: 4 }), "role"));
-  ok("frameChannel bare stride needs capacity", await throws(() => frameChannel(t, 8, { role: "producer" }), "capacity"));
-  ok("frameChannel zero stride throws", await throws(() => frameChannel(t, 0, { role: "producer", capacity: 4 }), "stride"));
-  ok("frameChannel garbage layout throws", await throws(() => frameChannel(t, "nope", { role: "producer" })));
-}
+  assert.ok(await throws(() => frameChannel(t, 8, { role: "x", capacity: 4 }), "role"), "frameChannel bad role throws");
+  assert.ok(await throws(() => frameChannel(t, 8, { role: "producer" }), "capacity"), "frameChannel bare stride needs capacity");
+  assert.ok(await throws(() => frameChannel(t, 0, { role: "producer", capacity: 4 }), "stride"), "frameChannel zero stride throws");
+  assert.ok(await throws(() => frameChannel(t, "nope", { role: "producer" })), "frameChannel garbage layout throws");
+});
 
 // --- 15. frameChannel: lite-gl LAYOUT interop shape ------------------------
-{
+test("15. frameChannel: lite-gl LAYOUT interop shape", () => {
   const [a, b] = pair();
   const cap = 100, stride = 8; // lite-gl LAYOUT.POINT
   const p = frameChannel(a, stride, { role: "producer", capacity: cap });
   const c = frameChannel(b, { stride, capacity: cap }, { role: "consumer" });
-  ok("byteLength = capacity*stride*4", p.byteLength === cap * stride * 4);
-  ok("stride/capacity/kind exposed", p.stride === 8 && p.capacity === cap && p.kind === "f32");
-  ok("count defaults to 2", p.count === 2 && c.count === 2);
-  ok("{bytes} layout -> byte kind", frameChannel(a, { bytes: 64 }, { role: "producer" }).kind === "bytes");
+  assert.ok(p.byteLength === cap * stride * 4, "byteLength = capacity*stride*4");
+  assert.ok(p.stride === 8 && p.capacity === cap && p.kind === "f32", "stride/capacity/kind exposed");
+  assert.ok(p.count === 2 && c.count === 2, "count defaults to 2");
+  assert.ok(frameChannel(a, { bytes: 64 }, { role: "producer" }).kind === "bytes", "{bytes} layout -> byte kind");
   p.dispose(); c.dispose();
-}
+});
 
 // --- 16. frameChannel: data round-trip (in-process) ------------------------
-{
+test("16. frameChannel: data round-trip (in-process)", async () => {
   const [a, b] = pair();
   const stride = 4, cap = 3;
   const p = frameChannel(a, stride, { role: "producer", capacity: cap });
   const c = frameChannel(b, stride, { role: "consumer", capacity: cap });
-  ok("read() is null before first frame", c.read() === null);
+  assert.ok(c.read() === null, "read() is null before first frame");
   p.produce((f) => { f[0] = 7; f[stride] = 9; });
   await tick();
   const v = c.read();
-  ok("consumer reads produced values", !!v && v[0] === 7 && v[stride] === 9);
-  ok("read() view is cached (same object across reads)", c.read() === v);
+  assert.ok(!!v && v[0] === 7 && v[stride] === 9, "consumer reads produced values");
+  assert.ok(c.read() === v, "read() view is cached (same object across reads)");
   p.dispose(); c.dispose();
-}
+});
 
 // --- 17. frameChannel: worker-side ctx.frameChannel (serialized copy) ------
-{
+test("17. frameChannel: worker-side ctx.frameChannel (serialized copy)", async () => {
   const h = defineWorker((ctx) => {
     // self-contained: constants inlined, nothing closed over
     const ch = ctx.frameChannel(4, { role: "producer", capacity: 2 });
@@ -249,27 +259,27 @@ const SAB_OK = typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "u
   const c = h.frameChannel({ stride: 4, capacity: 2 }, { role: "consumer" });
   h.post("tick"); await tick(); await tick();
   const v = c.read();
-  ok("worker ctx.frameChannel produces to main consumer", !!v && v[0] === 1);
+  assert.ok(!!v && v[0] === 1, "worker ctx.frameChannel produces to main consumer");
   h.post("tick"); h.post("tick"); await tick(); await tick();
   const v2 = c.read();
-  ok("consumer advances to latest worker frame", !!v2 && v2[0] >= 2);
+  assert.ok(!!v2 && v2[0] >= 2, "consumer advances to latest worker frame");
   h.destroy();
-}
+});
 
 // --- 18. frameChannel: latest-wins drop ------------------------------------
-{
+test("18. frameChannel: latest-wins drop", async () => {
   const [a, b] = pair();
   const p = frameChannel(a, 4, { role: "producer", capacity: 2, count: 2 });
   const c = frameChannel(b, 4, { role: "consumer", capacity: 2, count: 2 });
   p.produce((f) => { f[0] = 1; }); await tick(); // arrives, left unread
   p.produce((f) => { f[0] = 2; }); await tick(); // supersedes the unread frame -> drop
-  ok("dropped increments when a frame is superseded unread", c.dropped >= 1);
-  ok("consumer holds the latest, not the dropped frame", c.read()[0] === 2);
+  assert.ok(c.dropped >= 1, "dropped increments when a frame is superseded unread");
+  assert.ok(c.read()[0] === 2, "consumer holds the latest, not the dropped frame");
   p.dispose(); c.dispose();
-}
+});
 
-// --- 19. frameChannel: bounded — pool conserved, never queues --------------
-{
+// --- 19. frameChannel: bounded -- pool conserved, never queues --------------
+test("19. frameChannel: bounded -- pool conserved, never queues", async () => {
   const [a, b] = pair();
   const count = 3;
   const p = frameChannel(a, 2, { role: "producer", capacity: 8, count });
@@ -281,25 +291,25 @@ const SAB_OK = typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "u
     if ((round & 15) === 0) { await tick(); c.read(); } // deliberately slow consumer
   }
   await tick(); await tick();
-  ok("producer.free never exceeds the pool count", maxFree <= count);
-  ok("every round is accounted (produced+dropped)", produced + dropped === 3000);
-  ok("frames dropped under flood (bounded, not queued)", dropped > 0);
-  ok("consumer still has a valid latest frame after soak", c.read() !== null);
+  assert.ok(maxFree <= count, "producer.free never exceeds the pool count");
+  assert.ok(produced + dropped === 3000, "every round is accounted (produced+dropped)");
+  assert.ok(dropped > 0, "frames dropped under flood (bounded, not queued)");
+  assert.ok(c.read() !== null, "consumer still has a valid latest frame after soak");
   p.dispose(); c.dispose();
-}
+});
 
 // --- 20. frameChannel: dispose detaches ------------------------------------
-{
+test("20. frameChannel: dispose detaches", () => {
   const [a, b] = pair();
   const p = frameChannel(a, 2, { role: "producer", capacity: 4 });
   const c = frameChannel(b, 2, { role: "consumer", capacity: 4 });
   p.dispose(); c.dispose();
-  ok("produce() after dispose returns false", p.produce(() => {}) === false);
-  ok("dispose() is idempotent", (() => { p.dispose(); c.dispose(); return true; })());
-}
+  assert.ok(p.produce(() => {}) === false, "produce() after dispose returns false");
+  assert.ok((() => { p.dispose(); c.dispose(); return true; })(), "dispose() is idempotent");
+});
 
 // --- 21. adoptCanvas + ctx.onCanvas (protocol over the loopback) -----------
-{
+test("21. adoptCanvas + ctx.onCanvas (protocol over the loopback)", async () => {
   // minimal DOM stubs for the main side
   globalThis.window = globalThis.window || { devicePixelRatio: 2, addEventListener() {}, removeEventListener() {} };
   globalThis.document = globalThis.document || { hidden: false, addEventListener() {}, removeEventListener() {} };
@@ -320,8 +330,8 @@ const SAB_OK = typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "u
   h.on("vis", (d) => (got.vis = d));
   h.on("drew", () => drew++);
 
-  ok("adoptCanvas throws without transferControlToOffscreen",
-    await throws(() => h.adoptCanvas({}), "transferControlToOffscreen"));
+  assert.ok(await throws(() => h.adoptCanvas({}), "transferControlToOffscreen"),
+    "adoptCanvas throws without transferControlToOffscreen");
 
   const fakeCanvas = {
     width: 0, height: 0,
@@ -330,27 +340,31 @@ const SAB_OK = typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "u
   };
   const adoption = h.adoptCanvas(fakeCanvas);
   await tick();
-  ok("onCanvas receives device dims (dpr applied)", got.adopted && got.adopted.w === 600 && got.adopted.h === 300);
-  ok("ctl exposes dpr + frame + visible", got.adopted && got.adopted.dpr === 2 && got.adopted.hasFrame && got.adopted.visible === true);
+  assert.ok(got.adopted && got.adopted.w === 600 && got.adopted.h === 300, "onCanvas receives device dims (dpr applied)");
+  assert.ok(got.adopted && got.adopted.dpr === 2 && got.adopted.hasFrame && got.adopted.visible === true, "ctl exposes dpr + frame + visible");
 
   adoption.resize(); await tick();
-  ok("resize is forwarded to the worker", got.resized && got.resized.cw === 600 && got.resized.dpr === 2);
+  assert.ok(got.resized && got.resized.cw === 600 && got.resized.dpr === 2, "resize is forwarded to the worker");
 
   adoption.pause(); await tick();
-  ok("pause forwards visibility=false", got.vis && got.vis.v === false);
+  assert.ok(got.vis && got.vis.v === false, "pause forwards visibility=false");
   adoption.resume(); await tick();
-  ok("resume forwards visibility=true", got.vis && got.vis.v === true);
+  assert.ok(got.vis && got.vis.v === true, "resume forwards visibility=true");
 
   await new Promise((r) => setTimeout(r, 50)); // let the ~120fps worker timer fire
-  ok("frame() render loop fires (timer-driven, auto-paused when hidden)", drew > 0);
+  assert.ok(drew > 0, "frame() render loop fires (timer-driven, auto-paused when hidden)");
 
+  // Pause the worker-side loop before teardown so it stops rescheduling its
+  // in-process setTimeout; otherwise node:test's event loop never drains.
+  adoption.pause();
+  await new Promise((r) => setTimeout(r, 20));
   adoption.dispose();
-  ok("adoption.dispose() does not throw", true);
+  assert.ok(true, "adoption.dispose() does not throw");
   h.destroy();
-}
+});
 
 // --- 22. spawn/destroy leak gate: no orphaned Blob URLs --------------------
-{
+test("22. spawn/destroy leak gate: no orphaned Blob URLs", () => {
   const before = sources.size;
   for (let i = 0; i < 50; i++) {
     const h = defineWorker((ctx) => { ctx.on("noop", () => {}); });
@@ -358,15 +372,15 @@ const SAB_OK = typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "u
     h.terminate();
     h.destroy();
   }
-  ok("no Blob URLs retained across 50 spawn/destroy cycles", sources.size === before);
+  assert.ok(sources.size === before, "no Blob URLs retained across 50 spawn/destroy cycles");
   const h = defineWorker(() => {}).spawn();
-  ok("spawned worker holds no lingering object URL (revoked on construction)", sources.size === before);
+  assert.ok(sources.size === before, "spawned worker holds no lingering object URL (revoked on construction)");
   h.destroy();
-  ok("destroy() marks the handle destroyed", h.destroyed === true);
-}
+  assert.ok(h.destroyed === true, "destroy() marks the handle destroyed");
+});
 
 // --- 23. worker error rejects in-flight calls (no hang to timeout) ---------
-{
+test("23. worker error rejects in-flight calls (no hang to timeout)", async () => {
   const h = defineWorker((ctx) => {
     ctx.on("hang", () => new Promise(() => {})); // never resolves
   }).spawn();
@@ -376,13 +390,13 @@ const SAB_OK = typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "u
   h._worker.onerror({ message: "simulated worker failure" });
   let rejected = false, msg = "";
   try { await p; } catch (e) { rejected = true; msg = e.message; }
-  ok("worker error rejects the pending call immediately", rejected && /simulated worker failure/.test(msg));
-  ok("pending map cleared after error", h._pending.size === 0);
+  assert.ok(rejected && /simulated worker failure/.test(msg), "worker error rejects the pending call immediately");
+  assert.ok(h._pending.size === 0, "pending map cleared after error");
   h.destroy();
-}
+});
 
 // --- 24. render loop prefers requestAnimationFrame when available ----------
-{
+test("24. render loop prefers requestAnimationFrame when available", async () => {
   let rafCalls = 0;
   const savedRaf = globalThis.requestAnimationFrame;
   const savedCaf = globalThis.cancelAnimationFrame;
@@ -399,57 +413,62 @@ const SAB_OK = typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "u
     const fake = { width: 0, height: 0, getBoundingClientRect: () => ({ width: 10, height: 10 }), transferControlToOffscreen: () => ({ width: 0, height: 0 }) };
     const adoption = h.adoptCanvas(fake);
     await new Promise((r) => setTimeout(r, 60));
-    ok("frame() without an explicit rate uses requestAnimationFrame", rafCalls > 0);
-    ok("rAF-driven loop actually renders", drew > 0);
+    assert.ok(rafCalls > 0, "frame() without an explicit rate uses requestAnimationFrame");
+    assert.ok(drew > 0, "rAF-driven loop actually renders");
+    // Pause the worker-side loop before teardown so its rAF/setTimeout chain
+    // stops rescheduling and node:test's event loop can drain.
+    adoption.pause();
+    await new Promise((r) => setTimeout(r, 20));
     adoption.dispose(); h.destroy();
   } finally {
     globalThis.requestAnimationFrame = savedRaf;
     globalThis.cancelAnimationFrame = savedCaf;
   }
-}
+});
 
 // --- 25. SAB mode: negotiation, seqlock publish, latest-wins --------------
-if (SAB_OK) {
+test("25. SAB mode: negotiation, seqlock publish, latest-wins", { skip: !SAB_OK }, async () => {
   const stride = 8, capacity = 4;
   const [pt, ct] = pairTyped();
   const p = frameChannel(pt, { stride, capacity }, { role: "producer" });
   const c = frameChannel(ct, { stride, capacity }, { role: "consumer" });
-  ok("producer negotiates shared mode when SAB is available", p.mode === "shared" && p.shared === true);
+  assert.ok(p.mode === "shared" && p.shared === true, "producer negotiates shared mode when SAB is available");
   await tick();
-  ok("consumer upgrades to shared on handshake", c.mode === "shared" && c.shared === true);
+  assert.ok(c.mode === "shared" && c.shared === true, "consumer upgrades to shared on handshake");
 
-  ok("read() is null before the first publish", c.read() === null);
+  assert.ok(c.read() === null, "read() is null before the first publish");
   p.produce((f) => { f[0] = 11; f[stride] = 22; });
   const v = c.read();
-  ok("shared publish is visible to the consumer", !!v && v[0] === 11 && v[stride] === 22);
-  ok("produce() never starves in shared mode", p.produce(() => {}) === true && p.free === p.count);
+  assert.ok(!!v && v[0] === 11 && v[stride] === 22, "shared publish is visible to the consumer");
+  assert.ok(p.produce(() => {}) === true && p.free === p.count, "produce() never starves in shared mode");
 
   for (let i = 0; i < 500; i++) p.produce((f) => { f[0] = i; });
   const latest = c.read();
-  ok("consumer sees the newest frame after a burst", latest[0] === 499);
-  ok("unread frames count as dropped (latest-wins)", c.dropped > 0);
+  assert.ok(latest[0] === 499, "consumer sees the newest frame after a burst");
+  assert.ok(c.dropped > 0, "unread frames count as dropped (latest-wins)");
 
   const dst = new Float32Array(stride * capacity);
   p.produce((f) => { f[0] = 77; });
-  ok("readInto() takes a tear-free snapshot", c.readInto(dst) === true && dst[0] === 77);
-  ok("torn counter exposed and sane", typeof c.torn === "number" && c.torn >= 0);
+  assert.ok(c.readInto(dst) === true && dst[0] === 77, "readInto() takes a tear-free snapshot");
+  assert.ok(typeof c.torn === "number" && c.torn >= 0, "torn counter exposed and sane");
   p.dispose(); c.dispose();
-}
+});
 
 // --- 26. SAB mode: explicit selection + graceful fallback ------------------
-{
+test("26. SAB mode: explicit selection + graceful fallback", async () => {
   const [pt, ct] = pairTyped();
-  ok("mode:'transfer' stays on the transferable ring even when SAB exists",
-    frameChannel(pt, 4, { role: "producer", capacity: 4, mode: "transfer" }).mode === "transfer");
-  ok("invalid mode throws", await throws(() => frameChannel(pt, 4, { role: "producer", capacity: 4, mode: "nope" }), "mode"));
+  assert.ok(frameChannel(pt, 4, { role: "producer", capacity: 4, mode: "transfer" }).mode === "transfer",
+    "mode:'transfer' stays on the transferable ring even when SAB exists");
+  assert.ok(await throws(() => frameChannel(pt, 4, { role: "producer", capacity: 4, mode: "nope" }), "mode"),
+    "invalid mode throws");
 
   // A bare { send, onRaw } transport can't negotiate the handover, so shared
   // mode is unavailable and auto falls back silently.
   const [bare] = pair();
-  ok("auto falls back to transfer on a transport without post()/on()",
-    frameChannel(bare, 4, { role: "producer", capacity: 4 }).mode === "transfer");
-  ok("explicit mode:'shared' on a bare transport throws",
-    await throws(() => frameChannel(bare, 4, { role: "producer", capacity: 4, mode: "shared" }), "post()"));
+  assert.ok(frameChannel(bare, 4, { role: "producer", capacity: 4 }).mode === "transfer",
+    "auto falls back to transfer on a transport without post()/on()");
+  assert.ok(await throws(() => frameChannel(bare, 4, { role: "producer", capacity: 4, mode: "shared" }), "post()"),
+    "explicit mode:'shared' on a bare transport throws");
 
   // Layout mismatch must not silently attach the wrong shared region.
   if (SAB_OK) {
@@ -457,12 +476,8 @@ if (SAB_OK) {
     const prod = frameChannel(a, { stride: 4, capacity: 8 }, { role: "producer" });
     const mism = frameChannel(b, { stride: 4, capacity: 9 }, { role: "consumer" });
     await tick();
-    ok("consumer ignores a handshake whose layout doesn't match", mism.mode === "transfer");
+    assert.ok(mism.mode === "transfer", "consumer ignores a handshake whose layout doesn't match");
     prod.dispose(); mism.dispose();
   }
-  ct.post; // touch to keep the pair alive for lint-free symmetry
-}
-
-console.log(results.join("\n"));
-console.log("\n" + pass + " passed, " + fail + " failed");
-process.exit(fail ? 1 : 0);
+  void ct;
+});

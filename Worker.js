@@ -12,6 +12,9 @@
  * @copyright Zahary Shinikchiev
  */
 
+/** Package version. Kept in three-place sync with package.json and CHANGELOG.md. */
+export const VERSION = "1.3.1";
+
 // Reused across every handle: an empty transfer list. postMessage reads it
 // synchronously, so a shared frozen instance is safe and allocates nothing.
 const NO_TRANSFER = Object.freeze([]);

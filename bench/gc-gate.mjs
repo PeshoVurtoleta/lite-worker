@@ -17,7 +17,7 @@
  */
 import { checkOps, measureOps } from "@zakkster/lite-gc-profiler";
 import { readFileSync, statSync } from "node:fs";
-import { frameChannel, defineWorker } from "../Worker.d.ts";
+import { frameChannel, defineWorker } from "../Worker.js";
 
 const FRAMES = 10000;
 let failures = 0;

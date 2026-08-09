@@ -5,6 +5,64 @@ All notable changes to `@zakkster/lite-worker` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-08-09
+
+Proof-infrastructure patch release. No runtime behaviour changes to `Worker.js` --
+only enforcement, tests, and packaging so the guarantees are provable.
+
+### Fixed
+
+- **The release gate had never run.** `bench/gc-gate.mjs` imported `defineWorker`/
+  `frameChannel` from `../Worker.d.ts` (the declaration file) instead of
+  `../Worker.js`, so `npm run gate` threw `SyntaxError` and no gate output was
+  ever produced. Fixed the import; `npm run gate` now runs green and prints
+  actual numbers. (W-01)
+
+### Added
+
+- **`VERSION` export** in `Worker.js` (and declared in `Worker.d.ts`), value
+  `"1.3.1"`. Establishes three-place version sync (package.json + `VERSION` +
+  CHANGELOG) from this release forward. A test asserts `VERSION` equals the
+  package.json version. (W-03)
+- **`test/torture.mjs` + `test/torture/harness.mjs`** -- a tiered torture suite
+  gated with `@zakkster/lite-gc-profiler` (zero-retention) and
+  `@zakkster/lite-leak` (soak/retention). Tiers wired now: T0 channel laws
+  (latest-wins, bounded, pool conservation), T1 degenerate layouts/payloads, T2
+  lifecycle abuse (incl. 4096 spawn/destroy cycles with zero retained Blob URLs
+  and zero live workers), T6 zero-retention gate (both modes, `maxBytesPerOp:8`,
+  `maxMajorsPerKOp:0`) plus pool `byteLength` invariance, T7 soak (4096 cycles +
+  conservation invariant + lite-leak churn), and T9 controls (each gate has a
+  deliberately-broken variant that must be caught). T3/T4/T5/T8 are registered as
+  pending placeholders for later sessions; the harness includes a
+  `worker_threads` `self`-shim scaffold for the real-thread seqlock work. Run
+  with `npm run torture`. (W-02)
+- `"bugs"` field in package.json pointing at the issue tracker. (W-09)
+
+### Changed
+
+- **Test runner ported to `node:test`.** `test/Worker.test.js` was a bespoke
+  `ok()`/`process.exit()` runner; it now uses `node:test` + `node:assert/strict`
+  with every original assertion preserved, and `npm test` is `node --test`. (W-08)
+- Dev dependencies: `@zakkster/lite-gc-profiler` moved to `^1.11.0`;
+  `@zakkster/lite-leak` (`^1.8.1`) added, as required by the torture harness. (W-09)
+
+### Known issues (fixed downstream)
+
+These findings are recorded here and addressed in W1-W3:
+
+- **W-04 / W-05** -- shared-mode's tear-free seqlock is only exercised against a
+  synchronous producer, so the retry branches are never taken and `torn` is
+  structurally 0. A real `worker_threads` hostile-writer proof lands in W1
+  (torture T3/T5).
+- **W-06** -- the live-view lifetime in shared mode (a `read()` view is valid for
+  exactly `count - 1` subsequent publishes) is documented loosely but not pinned
+  by a named test. Pinned in W2.
+- **W-10** -- the `lw:fc:sab` handshake validates `byteLength`/`count` but not
+  `m.sab instanceof SharedArrayBuffer`, and the `lw:fc:*` reserved namespace is
+  undocumented. Hardened + documented in W2.
+- **W-07** -- README/llms.txt reference a `demos/` path; the directory is `demo/`.
+  Fixed in W3 alongside the doc-number regeneration.
+
 ## [1.3.0] - 2026-07-19
 
 ### Added
@@ -156,6 +214,7 @@ Initial release — the inline worker core.
 - Phosphor oscilloscope demo: off-thread waveform synthesis with double-buffered
   transferable ping-pong and a zero-allocation render loop.
 
+[1.3.1]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.3.1
 [1.3.0]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.3.0
 [1.2.0]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.2.0
 [1.1.0]: https://github.com/PeshoVurtoleta/lite-worker/releases/tag/v1.1.0

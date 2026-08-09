@@ -3,6 +3,9 @@
  * @copyright Zahary Shinikchiev
  */
 
+/** Package version. Kept in three-place sync with package.json and CHANGELOG.md. */
+export declare const VERSION: string;
+
 /** Options passed to {@link defineWorker}. */
 export interface WorkerOptions {
   /**
