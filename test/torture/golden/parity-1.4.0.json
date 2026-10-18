@@ -1,0 +1,2562 @@
+{
+  "schema": 1,
+  "frozenSha256": "b1ddbdf8412da33ed04af6b7ed7970a9a3c2bf127c14e60d0c67cf9e4938f726",
+  "trace": {
+    "exports": [
+      ["VERSION","string"],
+      ["default","function"],
+      ["defineWorker","function"],
+      ["frameChannel","function"]
+    ],
+    "defaultIsDefineWorker": true,
+    "fc": {
+      "transfer": {
+        "f32": {
+          "prodKeys": [
+            "role",
+            "mode",
+            "shared",
+            "kind",
+            "stride",
+            "capacity",
+            "byteLength",
+            "count",
+            "produce",
+            "free",
+            "dispose"
+          ],
+          "consKeys": [
+            "role",
+            "mode",
+            "shared",
+            "kind",
+            "stride",
+            "capacity",
+            "byteLength",
+            "count",
+            "read",
+            "readInto",
+            "hasNew",
+            "dropped",
+            "torn",
+            "received",
+            "lastFrame",
+            "dispose"
+          ],
+          "prod": {"kind":"f32","stride":4,"capacity":2,"byteLength":32,"count":2},
+          "init": {
+            "read": null,
+            "dropped": 0,
+            "free": 2,
+            "byteLength": 32,
+            "mode": "transfer",
+            "shared": false,
+            "hasNew": false,
+            "received": 0,
+            "lastFrame": -1,
+            "torn": 0,
+            "published": {"$u":true},
+            "hasNewBefore": false,
+            "prodMode": "transfer"
+          },
+          "latest": {
+            "seed": true,
+            "seedSnap": {
+              "read": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [
+                  1083179008,
+                  1085276160,
+                  1087373312,
+                  1089470464,
+                  1091043328,
+                  1092091904,
+                  1093140480,
+                  1094189056
+                ]
+              },
+              "dropped": 0,
+              "free": 1,
+              "byteLength": 32,
+              "mode": "transfer",
+              "shared": false,
+              "hasNew": false,
+              "received": 1,
+              "lastFrame": 1,
+              "torn": 0,
+              "published": {"$u":true},
+              "hasNewBefore": true,
+              "prodMode": "transfer"
+            },
+            "produced": 64,
+            "after": {
+              "read": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [
+                  1132609536,
+                  1132642304,
+                  1132675072,
+                  1132707840,
+                  1132740608,
+                  1132773376,
+                  1132806144,
+                  1132838912
+                ]
+              },
+              "dropped": 63,
+              "free": 1,
+              "byteLength": 32,
+              "mode": "transfer",
+              "shared": false,
+              "hasNew": false,
+              "received": 65,
+              "lastFrame": 65,
+              "torn": 0,
+              "published": {"$u":true},
+              "hasNewBefore": true,
+              "prodMode": "transfer"
+            }
+          },
+          "recycle": [
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":63,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":64,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [
+                    1137459200,
+                    1137491968,
+                    1137524736,
+                    1137557504,
+                    1137590272,
+                    1137623040,
+                    1137655808,
+                    1137688576
+                  ]
+                },
+                "dropped": 65,
+                "free": 1,
+                "byteLength": 32,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 68,
+                "lastFrame": 68,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":65,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":66,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [
+                    1137852416,
+                    1137885184,
+                    1137917952,
+                    1137950720,
+                    1137983488,
+                    1138016256,
+                    1138049024,
+                    1138081792
+                  ]
+                },
+                "dropped": 67,
+                "free": 1,
+                "byteLength": 32,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 71,
+                "lastFrame": 71,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":67,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":68,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [
+                    1138245632,
+                    1138278400,
+                    1138311168,
+                    1138343936,
+                    1138376704,
+                    1138409472,
+                    1138442240,
+                    1138475008
+                  ]
+                },
+                "dropped": 69,
+                "free": 1,
+                "byteLength": 32,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 74,
+                "lastFrame": 74,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":69,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":70,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [
+                    1138638848,
+                    1138671616,
+                    1138704384,
+                    1138737152,
+                    1138769920,
+                    1138802688,
+                    1138835456,
+                    1138868224
+                  ]
+                },
+                "dropped": 71,
+                "free": 1,
+                "byteLength": 32,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 77,
+                "lastFrame": 77,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":71,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":72,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [
+                    1139032064,
+                    1139064832,
+                    1139097600,
+                    1139130368,
+                    1139163136,
+                    1139195904,
+                    1139228672,
+                    1139261440
+                  ]
+                },
+                "dropped": 73,
+                "free": 1,
+                "byteLength": 32,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 80,
+                "lastFrame": 80,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":73,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":74,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [
+                    1139425280,
+                    1139458048,
+                    1139490816,
+                    1139523584,
+                    1139556352,
+                    1139589120,
+                    1139621888,
+                    1139654656
+                  ]
+                },
+                "dropped": 75,
+                "free": 1,
+                "byteLength": 32,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 83,
+                "lastFrame": 83,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":75,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":76,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [
+                    1139818496,
+                    1139851264,
+                    1139884032,
+                    1139916800,
+                    1139949568,
+                    1139982336,
+                    1140015104,
+                    1140047872
+                  ]
+                },
+                "dropped": 77,
+                "free": 1,
+                "byteLength": 32,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 86,
+                "lastFrame": 86,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":77,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":78,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [
+                    1140211712,
+                    1140244480,
+                    1140277248,
+                    1140310016,
+                    1140342784,
+                    1140375552,
+                    1140408320,
+                    1140441088
+                  ]
+                },
+                "dropped": 79,
+                "free": 1,
+                "byteLength": 32,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 89,
+                "lastFrame": 89,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            }
+          ],
+          "readInto": [
+            {
+              "ok": true,
+              "into": true,
+              "dst": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [
+                  1145577472,
+                  1145593856,
+                  1145610240,
+                  1145626624,
+                  1145643008,
+                  1145659392,
+                  1145675776,
+                  1145692160
+                ]
+              },
+              "s": {"free":1,"hasNew":false,"dropped":79,"published":{"$u":true}},
+              "lastFrame": 90
+            },
+            {
+              "ok": true,
+              "into": true,
+              "dst": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [
+                  1145708544,
+                  1145724928,
+                  1145741312,
+                  1145757696,
+                  1145774080,
+                  1145790464,
+                  1145806848,
+                  1145823232
+                ]
+              },
+              "s": {"free":1,"hasNew":false,"dropped":80,"published":{"$u":true}},
+              "lastFrame": 92
+            },
+            {
+              "ok": true,
+              "into": true,
+              "dst": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [
+                  1145774080,
+                  1145790464,
+                  1145806848,
+                  1145823232,
+                  1145839616,
+                  1145856000,
+                  1145872384,
+                  1145888768
+                ]
+              },
+              "s": {"free":1,"hasNew":false,"dropped":80,"published":{"$u":true}},
+              "lastFrame": 93
+            }
+          ],
+          "disposed": {"free":0,"produce":false,"read":null,"dropped":80,"again":[{"ok":true},{"ok":true}]}
+        },
+        "obj": {
+          "prodKeys": [
+            "role",
+            "mode",
+            "shared",
+            "kind",
+            "stride",
+            "capacity",
+            "byteLength",
+            "count",
+            "produce",
+            "free",
+            "dispose"
+          ],
+          "consKeys": [
+            "role",
+            "mode",
+            "shared",
+            "kind",
+            "stride",
+            "capacity",
+            "byteLength",
+            "count",
+            "read",
+            "readInto",
+            "hasNew",
+            "dropped",
+            "torn",
+            "received",
+            "lastFrame",
+            "dispose"
+          ],
+          "prod": {"kind":"f32","stride":3,"capacity":2,"byteLength":24,"count":2},
+          "init": {
+            "read": null,
+            "dropped": 0,
+            "free": 2,
+            "byteLength": 24,
+            "mode": "transfer",
+            "shared": false,
+            "hasNew": false,
+            "received": 0,
+            "lastFrame": -1,
+            "torn": 0,
+            "published": {"$u":true},
+            "hasNewBefore": false,
+            "prodMode": "transfer"
+          },
+          "latest": {
+            "seed": true,
+            "seedSnap": {
+              "read": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [1083179008,1085276160,1087373312,1089470464,1091043328,1092091904]
+              },
+              "dropped": 0,
+              "free": 1,
+              "byteLength": 24,
+              "mode": "transfer",
+              "shared": false,
+              "hasNew": false,
+              "received": 1,
+              "lastFrame": 1,
+              "torn": 0,
+              "published": {"$u":true},
+              "hasNewBefore": true,
+              "prodMode": "transfer"
+            },
+            "produced": 64,
+            "after": {
+              "read": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [1132609536,1132642304,1132675072,1132707840,1132740608,1132773376]
+              },
+              "dropped": 63,
+              "free": 1,
+              "byteLength": 24,
+              "mode": "transfer",
+              "shared": false,
+              "hasNew": false,
+              "received": 65,
+              "lastFrame": 65,
+              "torn": 0,
+              "published": {"$u":true},
+              "hasNewBefore": true,
+              "prodMode": "transfer"
+            }
+          },
+          "recycle": [
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":63,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":64,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [1137459200,1137491968,1137524736,1137557504,1137590272,1137623040]
+                },
+                "dropped": 65,
+                "free": 1,
+                "byteLength": 24,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 68,
+                "lastFrame": 68,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":65,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":66,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [1137852416,1137885184,1137917952,1137950720,1137983488,1138016256]
+                },
+                "dropped": 67,
+                "free": 1,
+                "byteLength": 24,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 71,
+                "lastFrame": 71,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":67,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":68,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [1138245632,1138278400,1138311168,1138343936,1138376704,1138409472]
+                },
+                "dropped": 69,
+                "free": 1,
+                "byteLength": 24,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 74,
+                "lastFrame": 74,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":69,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":70,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [1138638848,1138671616,1138704384,1138737152,1138769920,1138802688]
+                },
+                "dropped": 71,
+                "free": 1,
+                "byteLength": 24,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 77,
+                "lastFrame": 77,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":71,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":72,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [1139032064,1139064832,1139097600,1139130368,1139163136,1139195904]
+                },
+                "dropped": 73,
+                "free": 1,
+                "byteLength": 24,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 80,
+                "lastFrame": 80,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":73,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":74,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [1139425280,1139458048,1139490816,1139523584,1139556352,1139589120]
+                },
+                "dropped": 75,
+                "free": 1,
+                "byteLength": 24,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 83,
+                "lastFrame": 83,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":75,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":76,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [1139818496,1139851264,1139884032,1139916800,1139949568,1139982336]
+                },
+                "dropped": 77,
+                "free": 1,
+                "byteLength": 24,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 86,
+                "lastFrame": 86,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":77,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":78,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": false,
+                  "bits": [1140211712,1140244480,1140277248,1140310016,1140342784,1140375552]
+                },
+                "dropped": 79,
+                "free": 1,
+                "byteLength": 24,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 89,
+                "lastFrame": 89,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            }
+          ],
+          "readInto": [
+            {
+              "ok": true,
+              "into": true,
+              "dst": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [1145577472,1145593856,1145610240,1145626624,1145643008,1145659392]
+              },
+              "s": {"free":1,"hasNew":false,"dropped":79,"published":{"$u":true}},
+              "lastFrame": 90
+            },
+            {
+              "ok": true,
+              "into": true,
+              "dst": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [1145708544,1145724928,1145741312,1145757696,1145774080,1145790464]
+              },
+              "s": {"free":1,"hasNew":false,"dropped":80,"published":{"$u":true}},
+              "lastFrame": 92
+            },
+            {
+              "ok": true,
+              "into": true,
+              "dst": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [1145774080,1145790464,1145806848,1145823232,1145839616,1145856000]
+              },
+              "s": {"free":1,"hasNew":false,"dropped":80,"published":{"$u":true}},
+              "lastFrame": 93
+            }
+          ],
+          "disposed": {"free":0,"produce":false,"read":null,"dropped":80,"again":[{"ok":true},{"ok":true}]}
+        },
+        "bytes": {
+          "prodKeys": [
+            "role",
+            "mode",
+            "shared",
+            "kind",
+            "stride",
+            "capacity",
+            "byteLength",
+            "count",
+            "produce",
+            "free",
+            "dispose"
+          ],
+          "consKeys": [
+            "role",
+            "mode",
+            "shared",
+            "kind",
+            "stride",
+            "capacity",
+            "byteLength",
+            "count",
+            "read",
+            "readInto",
+            "hasNew",
+            "dropped",
+            "torn",
+            "received",
+            "lastFrame",
+            "dispose"
+          ],
+          "prod": {"kind":"bytes","stride":0,"capacity":0,"byteLength":8,"count":2},
+          "init": {
+            "read": null,
+            "dropped": 0,
+            "free": 2,
+            "byteLength": 8,
+            "mode": "transfer",
+            "shared": false,
+            "hasNew": false,
+            "received": 0,
+            "lastFrame": -1,
+            "torn": 0,
+            "published": {"$u":true},
+            "hasNewBefore": false,
+            "prodMode": "transfer"
+          },
+          "latest": {
+            "seed": true,
+            "seedSnap": {
+              "read": {"$ta":"Uint8Array","sab":false,"bytes":[4,5,6,7,8,9,10,11]},
+              "dropped": 0,
+              "free": 1,
+              "byteLength": 8,
+              "mode": "transfer",
+              "shared": false,
+              "hasNew": false,
+              "received": 1,
+              "lastFrame": 1,
+              "torn": 0,
+              "published": {"$u":true},
+              "hasNewBefore": true,
+              "prodMode": "transfer"
+            },
+            "produced": 64,
+            "after": {
+              "read": {"$ta":"Uint8Array","sab":false,"bytes":[4,5,6,7,8,9,10,11]},
+              "dropped": 63,
+              "free": 1,
+              "byteLength": 8,
+              "mode": "transfer",
+              "shared": false,
+              "hasNew": false,
+              "received": 65,
+              "lastFrame": 65,
+              "torn": 0,
+              "published": {"$u":true},
+              "hasNewBefore": true,
+              "prodMode": "transfer"
+            }
+          },
+          "recycle": [
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":63,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":64,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":false,"bytes":[152,153,154,155,156,157,158,159]},
+                "dropped": 65,
+                "free": 1,
+                "byteLength": 8,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 68,
+                "lastFrame": 68,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":65,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":66,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":false,"bytes":[164,165,166,167,168,169,170,171]},
+                "dropped": 67,
+                "free": 1,
+                "byteLength": 8,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 71,
+                "lastFrame": 71,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":67,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":68,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":false,"bytes":[176,177,178,179,180,181,182,183]},
+                "dropped": 69,
+                "free": 1,
+                "byteLength": 8,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 74,
+                "lastFrame": 74,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":69,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":70,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":false,"bytes":[188,189,190,191,192,193,194,195]},
+                "dropped": 71,
+                "free": 1,
+                "byteLength": 8,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 77,
+                "lastFrame": 77,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":71,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":72,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":false,"bytes":[200,201,202,203,204,205,206,207]},
+                "dropped": 73,
+                "free": 1,
+                "byteLength": 8,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 80,
+                "lastFrame": 80,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":73,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":74,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":false,"bytes":[212,213,214,215,216,217,218,219]},
+                "dropped": 75,
+                "free": 1,
+                "byteLength": 8,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 83,
+                "lastFrame": 83,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":75,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":76,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":false,"bytes":[224,225,226,227,228,229,230,231]},
+                "dropped": 77,
+                "free": 1,
+                "byteLength": 8,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 86,
+                "lastFrame": 86,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            },
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":77,"published":{"$u":true}}},
+            {"ok":true,"s":{"free":1,"hasNew":true,"dropped":78,"published":{"$u":true}}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":false,"bytes":[236,237,238,239,240,241,242,243]},
+                "dropped": 79,
+                "free": 1,
+                "byteLength": 8,
+                "mode": "transfer",
+                "shared": false,
+                "hasNew": false,
+                "received": 89,
+                "lastFrame": 89,
+                "torn": 0,
+                "published": {"$u":true},
+                "hasNewBefore": true,
+                "prodMode": "transfer"
+              }
+            }
+          ],
+          "readInto": [
+            {
+              "ok": true,
+              "into": true,
+              "dst": {"$ta":"Uint8Array","sab":false,"bytes":[32,33,34,35,36,37,38,39]},
+              "s": {"free":1,"hasNew":false,"dropped":79,"published":{"$u":true}},
+              "lastFrame": 90
+            },
+            {
+              "ok": true,
+              "into": true,
+              "dst": {"$ta":"Uint8Array","sab":false,"bytes":[40,41,42,43,44,45,46,47]},
+              "s": {"free":1,"hasNew":false,"dropped":80,"published":{"$u":true}},
+              "lastFrame": 92
+            },
+            {
+              "ok": true,
+              "into": true,
+              "dst": {"$ta":"Uint8Array","sab":false,"bytes":[44,45,46,47,48,49,50,51]},
+              "s": {"free":1,"hasNew":false,"dropped":80,"published":{"$u":true}},
+              "lastFrame": 93
+            }
+          ],
+          "disposed": {"free":0,"produce":false,"read":null,"dropped":80,"again":[{"ok":true},{"ok":true}]}
+        }
+      },
+      "shared": {
+        "f32": {
+          "prodKeys": [
+            "role",
+            "mode",
+            "shared",
+            "kind",
+            "stride",
+            "capacity",
+            "byteLength",
+            "count",
+            "produce",
+            "free",
+            "published",
+            "dispose"
+          ],
+          "consKeys": [
+            "role",
+            "mode",
+            "shared",
+            "kind",
+            "stride",
+            "capacity",
+            "byteLength",
+            "count",
+            "read",
+            "readInto",
+            "hasNew",
+            "dropped",
+            "torn",
+            "received",
+            "lastFrame",
+            "dispose"
+          ],
+          "prod": {"kind":"f32","stride":4,"capacity":2,"byteLength":32,"count":2},
+          "init": {
+            "read": null,
+            "dropped": 0,
+            "free": 2,
+            "byteLength": 32,
+            "mode": "shared",
+            "shared": true,
+            "hasNew": false,
+            "received": 0,
+            "lastFrame": -1,
+            "torn": 0,
+            "published": 0,
+            "hasNewBefore": false,
+            "prodMode": "shared"
+          },
+          "latest": {
+            "seed": true,
+            "seedSnap": {
+              "read": {
+                "$ta": "Float32Array",
+                "sab": true,
+                "bits": [
+                  1083179008,
+                  1085276160,
+                  1087373312,
+                  1089470464,
+                  1091043328,
+                  1092091904,
+                  1093140480,
+                  1094189056
+                ]
+              },
+              "dropped": 0,
+              "free": 2,
+              "byteLength": 32,
+              "mode": "shared",
+              "shared": true,
+              "hasNew": false,
+              "received": 1,
+              "lastFrame": 1,
+              "torn": 0,
+              "published": 1,
+              "hasNewBefore": true,
+              "prodMode": "shared"
+            },
+            "produced": 64,
+            "after": {
+              "read": {
+                "$ta": "Float32Array",
+                "sab": true,
+                "bits": [
+                  1132609536,
+                  1132642304,
+                  1132675072,
+                  1132707840,
+                  1132740608,
+                  1132773376,
+                  1132806144,
+                  1132838912
+                ]
+              },
+              "dropped": 63,
+              "free": 2,
+              "byteLength": 32,
+              "mode": "shared",
+              "shared": true,
+              "hasNew": false,
+              "received": 65,
+              "lastFrame": 65,
+              "torn": 0,
+              "published": 65,
+              "hasNewBefore": true,
+              "prodMode": "shared"
+            }
+          },
+          "recycle": [
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":63,"published":66}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":63,"published":67}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [
+                    1137459200,
+                    1137491968,
+                    1137524736,
+                    1137557504,
+                    1137590272,
+                    1137623040,
+                    1137655808,
+                    1137688576
+                  ]
+                },
+                "dropped": 65,
+                "free": 2,
+                "byteLength": 32,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 68,
+                "lastFrame": 68,
+                "torn": 0,
+                "published": 68,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":65,"published":69}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":65,"published":70}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [
+                    1137852416,
+                    1137885184,
+                    1137917952,
+                    1137950720,
+                    1137983488,
+                    1138016256,
+                    1138049024,
+                    1138081792
+                  ]
+                },
+                "dropped": 67,
+                "free": 2,
+                "byteLength": 32,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 71,
+                "lastFrame": 71,
+                "torn": 0,
+                "published": 71,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":67,"published":72}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":67,"published":73}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [
+                    1138245632,
+                    1138278400,
+                    1138311168,
+                    1138343936,
+                    1138376704,
+                    1138409472,
+                    1138442240,
+                    1138475008
+                  ]
+                },
+                "dropped": 69,
+                "free": 2,
+                "byteLength": 32,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 74,
+                "lastFrame": 74,
+                "torn": 0,
+                "published": 74,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":69,"published":75}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":69,"published":76}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [
+                    1138638848,
+                    1138671616,
+                    1138704384,
+                    1138737152,
+                    1138769920,
+                    1138802688,
+                    1138835456,
+                    1138868224
+                  ]
+                },
+                "dropped": 71,
+                "free": 2,
+                "byteLength": 32,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 77,
+                "lastFrame": 77,
+                "torn": 0,
+                "published": 77,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":71,"published":78}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":71,"published":79}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [
+                    1139032064,
+                    1139064832,
+                    1139097600,
+                    1139130368,
+                    1139163136,
+                    1139195904,
+                    1139228672,
+                    1139261440
+                  ]
+                },
+                "dropped": 73,
+                "free": 2,
+                "byteLength": 32,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 80,
+                "lastFrame": 80,
+                "torn": 0,
+                "published": 80,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":73,"published":81}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":73,"published":82}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [
+                    1139425280,
+                    1139458048,
+                    1139490816,
+                    1139523584,
+                    1139556352,
+                    1139589120,
+                    1139621888,
+                    1139654656
+                  ]
+                },
+                "dropped": 75,
+                "free": 2,
+                "byteLength": 32,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 83,
+                "lastFrame": 83,
+                "torn": 0,
+                "published": 83,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":75,"published":84}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":75,"published":85}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [
+                    1139818496,
+                    1139851264,
+                    1139884032,
+                    1139916800,
+                    1139949568,
+                    1139982336,
+                    1140015104,
+                    1140047872
+                  ]
+                },
+                "dropped": 77,
+                "free": 2,
+                "byteLength": 32,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 86,
+                "lastFrame": 86,
+                "torn": 0,
+                "published": 86,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":77,"published":87}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":77,"published":88}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [
+                    1140211712,
+                    1140244480,
+                    1140277248,
+                    1140310016,
+                    1140342784,
+                    1140375552,
+                    1140408320,
+                    1140441088
+                  ]
+                },
+                "dropped": 79,
+                "free": 2,
+                "byteLength": 32,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 89,
+                "lastFrame": 89,
+                "torn": 0,
+                "published": 89,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            }
+          ],
+          "readInto": [
+            {
+              "ok": true,
+              "into": true,
+              "dst": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [
+                  1145577472,
+                  1145593856,
+                  1145610240,
+                  1145626624,
+                  1145643008,
+                  1145659392,
+                  1145675776,
+                  1145692160
+                ]
+              },
+              "s": {"free":2,"hasNew":false,"dropped":79,"published":90},
+              "lastFrame": 90
+            },
+            {
+              "ok": true,
+              "into": true,
+              "dst": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [
+                  1145708544,
+                  1145724928,
+                  1145741312,
+                  1145757696,
+                  1145774080,
+                  1145790464,
+                  1145806848,
+                  1145823232
+                ]
+              },
+              "s": {"free":2,"hasNew":false,"dropped":80,"published":92},
+              "lastFrame": 92
+            },
+            {
+              "ok": true,
+              "into": true,
+              "dst": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [
+                  1145774080,
+                  1145790464,
+                  1145806848,
+                  1145823232,
+                  1145839616,
+                  1145856000,
+                  1145872384,
+                  1145888768
+                ]
+              },
+              "s": {"free":2,"hasNew":false,"dropped":80,"published":93},
+              "lastFrame": 93
+            }
+          ],
+          "disposed": {"free":2,"produce":false,"read":null,"dropped":80,"again":[{"ok":true},{"ok":true}]}
+        },
+        "obj": {
+          "prodKeys": [
+            "role",
+            "mode",
+            "shared",
+            "kind",
+            "stride",
+            "capacity",
+            "byteLength",
+            "count",
+            "produce",
+            "free",
+            "published",
+            "dispose"
+          ],
+          "consKeys": [
+            "role",
+            "mode",
+            "shared",
+            "kind",
+            "stride",
+            "capacity",
+            "byteLength",
+            "count",
+            "read",
+            "readInto",
+            "hasNew",
+            "dropped",
+            "torn",
+            "received",
+            "lastFrame",
+            "dispose"
+          ],
+          "prod": {"kind":"f32","stride":3,"capacity":2,"byteLength":24,"count":2},
+          "init": {
+            "read": null,
+            "dropped": 0,
+            "free": 2,
+            "byteLength": 24,
+            "mode": "shared",
+            "shared": true,
+            "hasNew": false,
+            "received": 0,
+            "lastFrame": -1,
+            "torn": 0,
+            "published": 0,
+            "hasNewBefore": false,
+            "prodMode": "shared"
+          },
+          "latest": {
+            "seed": true,
+            "seedSnap": {
+              "read": {
+                "$ta": "Float32Array",
+                "sab": true,
+                "bits": [1083179008,1085276160,1087373312,1089470464,1091043328,1092091904]
+              },
+              "dropped": 0,
+              "free": 2,
+              "byteLength": 24,
+              "mode": "shared",
+              "shared": true,
+              "hasNew": false,
+              "received": 1,
+              "lastFrame": 1,
+              "torn": 0,
+              "published": 1,
+              "hasNewBefore": true,
+              "prodMode": "shared"
+            },
+            "produced": 64,
+            "after": {
+              "read": {
+                "$ta": "Float32Array",
+                "sab": true,
+                "bits": [1132609536,1132642304,1132675072,1132707840,1132740608,1132773376]
+              },
+              "dropped": 63,
+              "free": 2,
+              "byteLength": 24,
+              "mode": "shared",
+              "shared": true,
+              "hasNew": false,
+              "received": 65,
+              "lastFrame": 65,
+              "torn": 0,
+              "published": 65,
+              "hasNewBefore": true,
+              "prodMode": "shared"
+            }
+          },
+          "recycle": [
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":63,"published":66}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":63,"published":67}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [1137459200,1137491968,1137524736,1137557504,1137590272,1137623040]
+                },
+                "dropped": 65,
+                "free": 2,
+                "byteLength": 24,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 68,
+                "lastFrame": 68,
+                "torn": 0,
+                "published": 68,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":65,"published":69}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":65,"published":70}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [1137852416,1137885184,1137917952,1137950720,1137983488,1138016256]
+                },
+                "dropped": 67,
+                "free": 2,
+                "byteLength": 24,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 71,
+                "lastFrame": 71,
+                "torn": 0,
+                "published": 71,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":67,"published":72}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":67,"published":73}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [1138245632,1138278400,1138311168,1138343936,1138376704,1138409472]
+                },
+                "dropped": 69,
+                "free": 2,
+                "byteLength": 24,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 74,
+                "lastFrame": 74,
+                "torn": 0,
+                "published": 74,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":69,"published":75}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":69,"published":76}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [1138638848,1138671616,1138704384,1138737152,1138769920,1138802688]
+                },
+                "dropped": 71,
+                "free": 2,
+                "byteLength": 24,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 77,
+                "lastFrame": 77,
+                "torn": 0,
+                "published": 77,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":71,"published":78}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":71,"published":79}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [1139032064,1139064832,1139097600,1139130368,1139163136,1139195904]
+                },
+                "dropped": 73,
+                "free": 2,
+                "byteLength": 24,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 80,
+                "lastFrame": 80,
+                "torn": 0,
+                "published": 80,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":73,"published":81}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":73,"published":82}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [1139425280,1139458048,1139490816,1139523584,1139556352,1139589120]
+                },
+                "dropped": 75,
+                "free": 2,
+                "byteLength": 24,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 83,
+                "lastFrame": 83,
+                "torn": 0,
+                "published": 83,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":75,"published":84}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":75,"published":85}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [1139818496,1139851264,1139884032,1139916800,1139949568,1139982336]
+                },
+                "dropped": 77,
+                "free": 2,
+                "byteLength": 24,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 86,
+                "lastFrame": 86,
+                "torn": 0,
+                "published": 86,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":77,"published":87}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":77,"published":88}},
+            {
+              "ok": true,
+              "s": {
+                "read": {
+                  "$ta": "Float32Array",
+                  "sab": true,
+                  "bits": [1140211712,1140244480,1140277248,1140310016,1140342784,1140375552]
+                },
+                "dropped": 79,
+                "free": 2,
+                "byteLength": 24,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 89,
+                "lastFrame": 89,
+                "torn": 0,
+                "published": 89,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            }
+          ],
+          "readInto": [
+            {
+              "ok": true,
+              "into": true,
+              "dst": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [1145577472,1145593856,1145610240,1145626624,1145643008,1145659392]
+              },
+              "s": {"free":2,"hasNew":false,"dropped":79,"published":90},
+              "lastFrame": 90
+            },
+            {
+              "ok": true,
+              "into": true,
+              "dst": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [1145708544,1145724928,1145741312,1145757696,1145774080,1145790464]
+              },
+              "s": {"free":2,"hasNew":false,"dropped":80,"published":92},
+              "lastFrame": 92
+            },
+            {
+              "ok": true,
+              "into": true,
+              "dst": {
+                "$ta": "Float32Array",
+                "sab": false,
+                "bits": [1145774080,1145790464,1145806848,1145823232,1145839616,1145856000]
+              },
+              "s": {"free":2,"hasNew":false,"dropped":80,"published":93},
+              "lastFrame": 93
+            }
+          ],
+          "disposed": {"free":2,"produce":false,"read":null,"dropped":80,"again":[{"ok":true},{"ok":true}]}
+        },
+        "bytes": {
+          "prodKeys": [
+            "role",
+            "mode",
+            "shared",
+            "kind",
+            "stride",
+            "capacity",
+            "byteLength",
+            "count",
+            "produce",
+            "free",
+            "published",
+            "dispose"
+          ],
+          "consKeys": [
+            "role",
+            "mode",
+            "shared",
+            "kind",
+            "stride",
+            "capacity",
+            "byteLength",
+            "count",
+            "read",
+            "readInto",
+            "hasNew",
+            "dropped",
+            "torn",
+            "received",
+            "lastFrame",
+            "dispose"
+          ],
+          "prod": {"kind":"bytes","stride":0,"capacity":0,"byteLength":8,"count":2},
+          "init": {
+            "read": null,
+            "dropped": 0,
+            "free": 2,
+            "byteLength": 8,
+            "mode": "shared",
+            "shared": true,
+            "hasNew": false,
+            "received": 0,
+            "lastFrame": -1,
+            "torn": 0,
+            "published": 0,
+            "hasNewBefore": false,
+            "prodMode": "shared"
+          },
+          "latest": {
+            "seed": true,
+            "seedSnap": {
+              "read": {"$ta":"Uint8Array","sab":true,"bytes":[4,5,6,7,8,9,10,11]},
+              "dropped": 0,
+              "free": 2,
+              "byteLength": 8,
+              "mode": "shared",
+              "shared": true,
+              "hasNew": false,
+              "received": 1,
+              "lastFrame": 1,
+              "torn": 0,
+              "published": 1,
+              "hasNewBefore": true,
+              "prodMode": "shared"
+            },
+            "produced": 64,
+            "after": {
+              "read": {"$ta":"Uint8Array","sab":true,"bytes":[4,5,6,7,8,9,10,11]},
+              "dropped": 63,
+              "free": 2,
+              "byteLength": 8,
+              "mode": "shared",
+              "shared": true,
+              "hasNew": false,
+              "received": 65,
+              "lastFrame": 65,
+              "torn": 0,
+              "published": 65,
+              "hasNewBefore": true,
+              "prodMode": "shared"
+            }
+          },
+          "recycle": [
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":63,"published":66}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":63,"published":67}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":true,"bytes":[152,153,154,155,156,157,158,159]},
+                "dropped": 65,
+                "free": 2,
+                "byteLength": 8,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 68,
+                "lastFrame": 68,
+                "torn": 0,
+                "published": 68,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":65,"published":69}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":65,"published":70}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":true,"bytes":[164,165,166,167,168,169,170,171]},
+                "dropped": 67,
+                "free": 2,
+                "byteLength": 8,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 71,
+                "lastFrame": 71,
+                "torn": 0,
+                "published": 71,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":67,"published":72}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":67,"published":73}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":true,"bytes":[176,177,178,179,180,181,182,183]},
+                "dropped": 69,
+                "free": 2,
+                "byteLength": 8,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 74,
+                "lastFrame": 74,
+                "torn": 0,
+                "published": 74,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":69,"published":75}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":69,"published":76}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":true,"bytes":[188,189,190,191,192,193,194,195]},
+                "dropped": 71,
+                "free": 2,
+                "byteLength": 8,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 77,
+                "lastFrame": 77,
+                "torn": 0,
+                "published": 77,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":71,"published":78}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":71,"published":79}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":true,"bytes":[200,201,202,203,204,205,206,207]},
+                "dropped": 73,
+                "free": 2,
+                "byteLength": 8,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 80,
+                "lastFrame": 80,
+                "torn": 0,
+                "published": 80,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":73,"published":81}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":73,"published":82}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":true,"bytes":[212,213,214,215,216,217,218,219]},
+                "dropped": 75,
+                "free": 2,
+                "byteLength": 8,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 83,
+                "lastFrame": 83,
+                "torn": 0,
+                "published": 83,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":75,"published":84}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":75,"published":85}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":true,"bytes":[224,225,226,227,228,229,230,231]},
+                "dropped": 77,
+                "free": 2,
+                "byteLength": 8,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 86,
+                "lastFrame": 86,
+                "torn": 0,
+                "published": 86,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            },
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":77,"published":87}},
+            {"ok":true,"s":{"free":2,"hasNew":true,"dropped":77,"published":88}},
+            {
+              "ok": true,
+              "s": {
+                "read": {"$ta":"Uint8Array","sab":true,"bytes":[236,237,238,239,240,241,242,243]},
+                "dropped": 79,
+                "free": 2,
+                "byteLength": 8,
+                "mode": "shared",
+                "shared": true,
+                "hasNew": false,
+                "received": 89,
+                "lastFrame": 89,
+                "torn": 0,
+                "published": 89,
+                "hasNewBefore": true,
+                "prodMode": "shared"
+              }
+            }
+          ],
+          "readInto": [
+            {
+              "ok": true,
+              "into": true,
+              "dst": {"$ta":"Uint8Array","sab":false,"bytes":[32,33,34,35,36,37,38,39]},
+              "s": {"free":2,"hasNew":false,"dropped":79,"published":90},
+              "lastFrame": 90
+            },
+            {
+              "ok": true,
+              "into": true,
+              "dst": {"$ta":"Uint8Array","sab":false,"bytes":[40,41,42,43,44,45,46,47]},
+              "s": {"free":2,"hasNew":false,"dropped":80,"published":92},
+              "lastFrame": 92
+            },
+            {
+              "ok": true,
+              "into": true,
+              "dst": {"$ta":"Uint8Array","sab":false,"bytes":[44,45,46,47,48,49,50,51]},
+              "s": {"free":2,"hasNew":false,"dropped":80,"published":93},
+              "lastFrame": 93
+            }
+          ],
+          "disposed": {"free":2,"produce":false,"read":null,"dropped":80,"again":[{"ok":true},{"ok":true}]}
+        }
+      },
+      "errors": [
+        {
+          "ok": false,
+          "name": "Error",
+          "message": "lite-worker: frameChannel needs options.role 'producer' or 'consumer'"
+        },
+        {
+          "ok": false,
+          "name": "Error",
+          "message": "lite-worker: frameChannel(stride) needs a positive stride and options.capacity"
+        },
+        {
+          "ok": false,
+          "name": "Error",
+          "message": "lite-worker: frameChannel({bytes}) needs a positive byte length"
+        },
+        {
+          "ok": false,
+          "name": "Error",
+          "message": "lite-worker: frameChannel(layout) must be a stride number, {stride,capacity}, or {bytes}"
+        }
+      ]
+    },
+    "handle": {
+      "defineWorkerBad": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "lite-worker: defineWorker(moduleFn) requires a function"
+      },
+      "fresh": {"spawned":false,"destroyed":false},
+      "postBeforeSpawn": {"ok":true},
+      "sendBeforeSpawn": {"ok":true},
+      "beforeSpawn": {"ok":false,"name":"Error","message":"lite-worker: call('echo') before spawn()"},
+      "spawnReturnsHandle": true,
+      "live": {"spawned":true,"destroyed":false},
+      "echo": {"ok":true,"v":{"a":1,"b":[2,3],"s":"x","z":{"$n":"-0"},"u":{"$u":true},"n":null}},
+      "async": {"ok":true,"v":42},
+      "throws": {"ok":false,"name":"TypeError","message":"mp boom"},
+      "noHandler": {"ok":false,"name":"Error","message":"lite-worker: no handler for 'nope'"},
+      "timeout": {"ok":false,"name":"Error","message":"lite-worker: call('hang') timed out after 5ms"},
+      "flush": {"ok":true,"v":0},
+      "pongs": [{"n":8}],
+      "raws": [
+        {"$ta":"Float32Array","sab":false,"bits":[1069547520,3221225472]},
+        {"$ab":4},
+        {"$ta":"Uint8Array","sab":false,"bytes":[1,2,3]}
+      ],
+      "dead": {"spawned":false,"destroyed":true},
+      "afterDestroy": {"ok":false,"name":"Error","message":"lite-worker: handle destroyed"},
+      "postAfterDestroy": {"ok":true},
+      "destroyAgain": {"ok":true},
+      "spawnAfterDestroy": {
+        "ok": false,
+        "name": "Error",
+        "message": "lite-worker: handle destroyed; call defineWorker() again"
+      },
+      "fc": {
+        "transfer": {
+          "keys": [
+            "role",
+            "mode",
+            "shared",
+            "kind",
+            "stride",
+            "capacity",
+            "byteLength",
+            "count",
+            "read",
+            "readInto",
+            "hasNew",
+            "dropped",
+            "torn",
+            "received",
+            "lastFrame",
+            "dispose"
+          ],
+          "first": {
+            "ok": true,
+            "v": {
+              "r": [true,true,false,false,false],
+              "free": 0,
+              "published": {"$u":true},
+              "mode": "transfer",
+              "keys": [
+                "role",
+                "mode",
+                "shared",
+                "kind",
+                "stride",
+                "capacity",
+                "byteLength",
+                "count",
+                "produce",
+                "free",
+                "dispose"
+              ]
+            }
+          },
+          "snap1": {
+            "read": {
+              "$ta": "Float32Array",
+              "sab": false,
+              "bits": [
+                1090781184,
+                1091829760,
+                1092878336,
+                1093926912,
+                1094975488,
+                1096024064,
+                1097072640,
+                1098121216
+              ]
+            },
+            "dropped": 1,
+            "free": {"$u":true},
+            "byteLength": 32,
+            "mode": "transfer",
+            "shared": false,
+            "hasNew": false,
+            "received": 2,
+            "lastFrame": 2,
+            "torn": 0,
+            "published": {"$u":true},
+            "hasNewBefore": true,
+            "prodMode": {"$u":true}
+          },
+          "more": {
+            "ok": true,
+            "v": {
+              "r": [true,false,false],
+              "free": 0,
+              "published": {"$u":true},
+              "mode": "transfer",
+              "keys": [
+                "role",
+                "mode",
+                "shared",
+                "kind",
+                "stride",
+                "capacity",
+                "byteLength",
+                "count",
+                "produce",
+                "free",
+                "dispose"
+              ]
+            }
+          },
+          "snap2": {
+            "read": {
+              "$ta": "Float32Array",
+              "sab": false,
+              "bits": [
+                1103233024,
+                1103757312,
+                1104281600,
+                1104805888,
+                1105330176,
+                1105854464,
+                1106378752,
+                1106903040
+              ]
+            },
+            "dropped": 1,
+            "free": {"$u":true},
+            "byteLength": 32,
+            "mode": "transfer",
+            "shared": false,
+            "hasNew": false,
+            "received": 3,
+            "lastFrame": 3,
+            "torn": 0,
+            "published": {"$u":true},
+            "hasNewBefore": true,
+            "prodMode": {"$u":true}
+          }
+        },
+        "auto": {
+          "keys": [
+            "role",
+            "mode",
+            "shared",
+            "kind",
+            "stride",
+            "capacity",
+            "byteLength",
+            "count",
+            "read",
+            "readInto",
+            "hasNew",
+            "dropped",
+            "torn",
+            "received",
+            "lastFrame",
+            "dispose"
+          ],
+          "first": {
+            "ok": true,
+            "v": {
+              "r": [true,true,true,true,true],
+              "free": 2,
+              "published": 5,
+              "mode": "shared",
+              "keys": [
+                "role",
+                "mode",
+                "shared",
+                "kind",
+                "stride",
+                "capacity",
+                "byteLength",
+                "count",
+                "produce",
+                "free",
+                "published",
+                "dispose"
+              ]
+            }
+          },
+          "snap1": {
+            "read": {
+              "$ta": "Float32Array",
+              "sab": true,
+              "bits": [
+                1101135872,
+                1101660160,
+                1102184448,
+                1102708736,
+                1103233024,
+                1103757312,
+                1104281600,
+                1104805888
+              ]
+            },
+            "dropped": 0,
+            "free": {"$u":true},
+            "byteLength": 32,
+            "mode": "shared",
+            "shared": true,
+            "hasNew": false,
+            "received": 5,
+            "lastFrame": 5,
+            "torn": 0,
+            "published": {"$u":true},
+            "hasNewBefore": true,
+            "prodMode": {"$u":true}
+          },
+          "more": {
+            "ok": true,
+            "v": {
+              "r": [true,true,true],
+              "free": 2,
+              "published": 8,
+              "mode": "shared",
+              "keys": [
+                "role",
+                "mode",
+                "shared",
+                "kind",
+                "stride",
+                "capacity",
+                "byteLength",
+                "count",
+                "produce",
+                "free",
+                "published",
+                "dispose"
+              ]
+            }
+          },
+          "snap2": {
+            "read": {
+              "$ta": "Float32Array",
+              "sab": true,
+              "bits": [
+                1107361792,
+                1107623936,
+                1107886080,
+                1108148224,
+                1108410368,
+                1108672512,
+                1108934656,
+                1109196800
+              ]
+            },
+            "dropped": 2,
+            "free": {"$u":true},
+            "byteLength": 32,
+            "mode": "shared",
+            "shared": true,
+            "hasNew": false,
+            "received": 8,
+            "lastFrame": 8,
+            "torn": 0,
+            "published": {"$u":true},
+            "hasNewBefore": true,
+            "prodMode": {"$u":true}
+          }
+        }
+      },
+      "proto": [
+        "_onErr",
+        "_onMessage",
+        "adoptCanvas",
+        "call",
+        "constructor",
+        "destroy",
+        "destroyed",
+        "frameChannel",
+        "off",
+        "offRaw",
+        "on",
+        "onRaw",
+        "post",
+        "send",
+        "spawn",
+        "spawned",
+        "terminate"
+      ],
+      "messages": [
+        {"dir":"m>w","data":{"t":"ping","i":0,"d":{"n":7}},"transfer":0},
+        {
+          "dir": "m>w",
+          "data": {"t":"echo","i":1,"d":{"a":1,"b":[2,3],"s":"x","z":{"$n":"-0"},"u":{"$u":true},"n":null}},
+          "transfer": 0
+        },
+        {"dir":"w>m","data":{"t":"pong","i":0,"d":{"n":8}}},
+        {
+          "dir": "w>m",
+          "data": {"i":1,"d":{"a":1,"b":[2,3],"s":"x","z":{"$n":"-0"},"u":{"$u":true},"n":null}}
+        },
+        {"dir":"m>w","data":{"t":"async","i":2,"d":41},"transfer":0},
+        {"dir":"w>m","data":{"i":2,"d":42}},
+        {"dir":"m>w","data":{"t":"throws","i":3,"d":null},"transfer":0},
+        {
+          "dir": "w>m",
+          "data": {"i":3,"e":{"name":"TypeError","message":"mp boom","stack":{"$stack":"string"}}}
+        },
+        {"dir":"m>w","data":{"t":"nope","i":4,"d":1},"transfer":0},
+        {
+          "dir": "w>m",
+          "data": {
+            "i": 4,
+            "e": {
+              "name": "Error",
+              "message": "lite-worker: no handler for 'nope'",
+              "stack": {"$stack":"string"}
+            }
+          }
+        },
+        {"dir":"m>w","data":{"t":"hang","i":5,"d":1},"transfer":0},
+        {
+          "dir": "m>w",
+          "data": {"$ta":"Float32Array","sab":false,"bits":[1069547520,3221225472]},
+          "transfer": 1
+        },
+        {"dir":"m>w","data":{"$ab":4},"transfer":1},
+        {"dir":"m>w","data":{"$ta":"Uint8Array","sab":false,"bytes":[1,2,3]},"transfer":0},
+        {"dir":"m>w","data":{"t":"echo","i":6,"d":0},"transfer":0},
+        {"dir":"w>m","data":{"$ta":"Float32Array","sab":false,"bits":[1069547520,3221225472]}},
+        {"dir":"w>m","data":{"$ab":4}},
+        {"dir":"w>m","data":{"$ta":"Uint8Array","sab":false,"bytes":[1,2,3]}},
+        {"dir":"w>m","data":{"i":6,"d":0}},
+        {"dir":"m>w","data":{"t":"fc","i":1,"d":{"mode":"transfer","n":5}},"transfer":0},
+        {"dir":"w>m","data":{"$ab":32}},
+        {"dir":"w>m","data":{"$ab":32}},
+        {"dir":"m>w","data":{"$ab":32},"transfer":1},
+        {
+          "dir": "w>m",
+          "data": {
+            "i": 1,
+            "d": {
+              "r": [true,true,false,false,false],
+              "free": 0,
+              "published": {"$u":true},
+              "mode": "transfer",
+              "keys": [
+                "role",
+                "mode",
+                "shared",
+                "kind",
+                "stride",
+                "capacity",
+                "byteLength",
+                "count",
+                "produce",
+                "free",
+                "dispose"
+              ]
+            }
+          }
+        },
+        {"dir":"m>w","data":{"t":"more","i":2,"d":{"n":3}},"transfer":0},
+        {"dir":"w>m","data":{"$ab":32}},
+        {"dir":"m>w","data":{"$ab":32},"transfer":1},
+        {
+          "dir": "w>m",
+          "data": {
+            "i": 2,
+            "d": {
+              "r": [true,false,false],
+              "free": 0,
+              "published": {"$u":true},
+              "mode": "transfer",
+              "keys": [
+                "role",
+                "mode",
+                "shared",
+                "kind",
+                "stride",
+                "capacity",
+                "byteLength",
+                "count",
+                "produce",
+                "free",
+                "dispose"
+              ]
+            }
+          }
+        },
+        {"dir":"m>w","data":{"t":"lw:fc:hello","i":0,"d":null},"transfer":0},
+        {"dir":"m>w","data":{"t":"fc","i":1,"d":{"mode":"auto","n":5}},"transfer":0},
+        {
+          "dir": "w>m",
+          "data": {
+            "t": "lw:fc:sab",
+            "i": 0,
+            "d": {"sab":{"$sab":80},"stride":4,"capacity":2,"kind":"f32","count":2,"byteLength":32}
+          }
+        },
+        {
+          "dir": "w>m",
+          "data": {
+            "i": 1,
+            "d": {
+              "r": [true,true,true,true,true],
+              "free": 2,
+              "published": 5,
+              "mode": "shared",
+              "keys": [
+                "role",
+                "mode",
+                "shared",
+                "kind",
+                "stride",
+                "capacity",
+                "byteLength",
+                "count",
+                "produce",
+                "free",
+                "published",
+                "dispose"
+              ]
+            }
+          }
+        },
+        {"dir":"m>w","data":{"t":"more","i":2,"d":{"n":3}},"transfer":0},
+        {
+          "dir": "w>m",
+          "data": {
+            "i": 2,
+            "d": {
+              "r": [true,true,true],
+              "free": 2,
+              "published": 8,
+              "mode": "shared",
+              "keys": [
+                "role",
+                "mode",
+                "shared",
+                "kind",
+                "stride",
+                "capacity",
+                "byteLength",
+                "count",
+                "produce",
+                "free",
+                "published",
+                "dispose"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -7,8 +7,9 @@
   M-08 (decisions/0002 Amendment A4)
 - Scope: design only. No edit to `Worker.js`, `Worker.d.ts` or `test/` is
   made or approved by this record. The design needs 0 exports beyond the
-  decisions/0002 surface, 0 new flags and 0 test hooks in shipped code. CODE (M3 and later) still needs the
-  maintainer's explicit approval; E2 has passed (decisions/0002 A6).
+  decisions/0002 surface, 0 new flags and 0 test hooks in shipped code.
+  CODE (M3 and later) still needs the maintainer's explicit approval; E2
+  has passed (decisions/0002 A6).
 
 ## Context
 
@@ -48,10 +49,11 @@ needs it is blocked and M3 must say so.
 - **D1.** The lane factory is serialized into `_source` as a self-contained
   function, like `__makeFrameChannel` (`Worker.js:533`), with stable SPLICE
   anchors so a mutant can be cut from the shipped body.
-- **D2.** The ARMED word is documented (M3's pick; the ADR 0002 nit is header
-  word 1). C10-s and the layout conformance step depend on it. The 128 B
-  inter-lane stride (a 128 B GAP between hot words, not just rounding) is
-  documented; L2 (lanes sharing one SAB) and conformance depend on it.
+- **D2.** The ARMED word is documented (M3's pick; the review nit was header
+  word 1; decided, see "M3 decisions"). C10-s and the layout conformance
+  step depend on it. The 128 B inter-lane stride (a 128 B GAP between hot
+  words, not just rounding) is documented; L2 (lanes sharing one SAB) and
+  conformance depend on it.
 - **D3.** The slab bitmap layout is documented (C6-s, `slabRestOk`).
 - **D4.** `Atomics.waitAsync` is looked up at construction or later, never at
   module load, so L10's arm counter can wrap it.
@@ -98,7 +100,7 @@ the verdict.
 | L7 | mailbox.mjs, mb-entry.mjs, mb-layout.mjs | main + 3 generations x 1 worker | `oracleOk`, 0 stale |
 | L8 | mailbox.mjs, mb-entry.mjs | main + 1 worker | `oracleOk`, `handshakeOk` |
 | L9 | mailbox.mjs, mb-entry.mjs | main + 1..4 workers | per-isolate T6 gate |
-| L10 | mailbox.mjs | main + 1 worker (open: see Q5) | `oracleOk`, `wakeOk`, arms |
+| L10 | mailbox.mjs | main + 1 worker (Q5: decided) | `oracleOk`, `wakeOk`, arms |
 | MP | parity-trace.mjs, golden | main + 1 worker | deep-equal trace |
 
 - **L1 uncontended.** 1 worker, 4 lanes (worker -> main and main -> worker,
@@ -291,6 +293,7 @@ and M-08 (Amendment A4).
 
 Open: the numeric encoding of REJECTED, and the `lw:mb:nak` / `lw:mb:ack`
 payload fields, are M3's pick (as M-04 says for the other four outcomes).
+Status: decided as Q6, see "M3 decisions".
 
 ## T-08 -- M3 B0 parity
 
@@ -303,6 +306,8 @@ export keys and typeof except VERSION. MP compares deep-equal against
 `dropped` count. `_source` bytes are NOT compared: serializing the mailbox
 body into WORKER_RUNTIME changes `_source` for every worker, so parity is
 behavioral only.
+Status: B0 froze the copy to `test/torture/frozen/Worker-1.4.0.js`
+(committed), not a scratch folder; see "M3 decisions".
 
 ## Maintainer decisions (2026-10-18)
 
@@ -317,7 +322,90 @@ behavioral only.
   matching the mirror text in `RESEARCH.md`. Remaining M3 gate: the
   maintainer's explicit approval only.
 
+## M3 decisions (2026-10-18, M3 planner pass)
+
+Source: the M3 plan (planner pass, with orchestrator addenda AD1, AD2). They
+decide T-00 D1-D4 and Open items Q5-Q8. Status of this record stays
+proposed; none is code yet.
+
+- **D1.** The factory is `makeMailbox(transport, layout, opts)`, module
+  scope and self-contained. `buildSource` appends
+  `var __makeMailbox = (...)` and `__ctx.mailbox = ...` after the canvas
+  line (`Worker.js:535-536`). SPLICE anchors are literal statements that
+  each occur exactly once in `_source`: A_PUBLISH (the TAIL store), A_FULL,
+  A_WRAP (`((t - h) | 0)`), A_ARMED (re-load + notify), A_CLAIM (the slab
+  CAS). B1 records the exact text of each.
+- **D2 / Q8 (Int32 words).** Consumer line: HEAD 0, ARMED 1. Producer line:
+  TAIL 32, FBN 33. Cold line from 64: GEN 64, STATE 65, CAP 66, W 67,
+  TYPE 68, SLOTS 69, SLOT_BYTES 70. Payload starts at byte 384. Lane stride
+  = 384 + roundUp128(CAP * W * elt) + a 128 B trailing GAP. The stride
+  grows by the slab region of D3 when SLOTS > 0; B1 fixes the exact formula.
+- **D3.** The slab sits inside its lane's stride: payload end + 128 GAP,
+  then [HINT words][BITMAP words] (bit 1 = used; slot = 32w + k; HINT bit j
+  = word j may be free), then roundUp128 + 128 GAP, then the slots
+  (`SLOT_BYTES % 8 === 0`), then 128 GAP.
+- **D4.** `typeof Atomics.waitAsync` is checked at construction. Each arm
+  reads `Atomics.waitAsync` as a live property, never a cached reference.
+- **Q5.** The L10 arm count stays single-thread (exactly R arms). Two
+  variants are added: a worker producer and a worker consumer (waitAsync).
+  Both gate `oracleOk` and `wakeOk`; their arm counts are REPORTED. L4 has
+  no worker variant.
+- **Q6.** `push` returns a Smi: OK 0, FULL 1, SLAB_EXHAUSTED 2,
+  SLOT_TOO_SMALL 3, RETIRED 4, REJECTED 5. The codes are statics on
+  `mailbox`, not new exports. Zero-box: `push(src, off)` takes a typed
+  array and a Smi offset. `lw:mb:nak {id, gen, why}`: why 1 byteLength,
+  2 CAP, 3 W, 4 TYPE, 5 GEN, 6 not a SAB. One `lw:mb:ack {id, gen, credit,
+  attached}` carries both the M-08 credit and the A4 verdict. FIFO across
+  the fallback -> SAB switch: the producer stores its fallback count in FBN
+  before its first SAB TAIL store; the consumer reads the SAB only after it
+  has delivered FBN fallback records.
+- **Q7.** Reuse the harness xorshift32 (`test/torture/harness.mjs:114`).
+  SEED = TORTURE_SEED, default 0x1a2b3c4d. Independent op and key streams
+  per lane; salts are the lane number in hex (AD1): L1 SEED ^ 0x6d620101
+  (op) / 0x6d620102 (key); L4 0x6d620401 / 0x6d620402; L6 0x6d620601 /
+  0x6d620602. Coverage floor: every op kind >= 1000 per run and every
+  outcome a lane can return >= 1, else FAIL.
+- **B0 note.** B0 changes nothing in `Worker.js`. The frozen copy is
+  `test/torture/frozen/Worker-1.4.0.js` (committed; sha256 equals
+  `git show HEAD:Worker.js`; AD2 pins the b595f9e build, sha256
+  b1ddbdf8412da33ed04af6b7ed7970a9a3c2bf127c14e60d0c67cf9e4938f726). The
+  golden is `test/torture/golden/parity-1.4.0.json` with schema
+  `{schema: 1, frozenSha256, trace}`. New export keys and handle-prototype
+  names pass MP only if listed in ALLOWED_NEW (`[]` at B0; B1 adds
+  `mailbox`). The must-fail control replaces `dropped++;` (it occurs
+  exactly once, `Worker.js:342`) with an empty statement `;` in the frozen
+  text (deleting it would make `transport.send(display);` the body of the
+  `if`); an anchor count other than 1
+  fails "source drifted", a mutant equal to the golden fails "decorative".
+
+Deltas to decisions/0002 M-03 (explicit, not silent):
+
+- ARMED is word 1, in the consumer line with HEAD (M-03 left the word to
+  M3).
+- FBN is word 33, in the producer line with TAIL (new; M-03 lists only
+  TAIL). The producer writes it, so the line stays producer-only.
+- The cold line gains SLOTS (69) and SLOT_BYTES (70) after TYPE.
+- Lane stride gains a 128 B trailing GAP and holds the slab (D3); it is
+  still a multiple of 128 B, so M-03's "rounded up to 128 B" holds.
+- Push outcomes are numbered (Q6); M-04 left the encoding to M3.
+
+Maintainer rulings (2026-10-18):
+
+- **Merged ack: DECIDED (accepted).** One `lw:mb:ack {id, gen, credit,
+  attached}`. The first ack is the A4 verdict and carries credit 0; later
+  acks carry the M-08 credit. Amends decisions/0002:209-211 (M-08, one
+  credit ack per drain) and decisions/0002:392-395 (A4, ack as verdict).
+- **FBN FIFO rule: DECIDED (accepted).** The producer stores its
+  fallback-record count in FBN (word 33) before its first SAB TAIL store.
+  The consumer reads the SAB only after it has delivered FBN fallback
+  records. Nothing is re-sent (Q2b). Amends decisions/0002 A4 (the switch)
+  and T-07 above, which said only "nothing is re-sent".
+
+No other pick contradicts 0002 M-03..M-09 or A1-A6.
+
 ## Open items (the plan is silent; not decided here)
+
+Q5-Q8 are decided: see "M3 decisions" above. The original text is kept.
 
 - **Q5.** Thread count for L10's wake-up bursts beyond "single thread" for
   the arm count; and whether L4 / L10 each need a worker variant.
@@ -330,8 +418,9 @@ behavioral only.
 ## Consequences
 
 - M2 changes only documents: this file, an Amendments section and three
-  in-place E2 status lines in decisions/0002, ROADMAP.md and RESEARCH.md. `Worker.js`, `Worker.d.ts`,
-  `test/`, README, llms.txt and CHANGELOG are untouched; VERSION is untouched.
+  in-place E2 status lines in decisions/0002, ROADMAP.md and RESEARCH.md.
+  `Worker.js`, `Worker.d.ts`, `test/`, README, llms.txt and CHANGELOG are
+  untouched; VERSION is untouched.
 - M3 inherits a written oracle, 11 lane rows, controls C1-C11 with -s / -r
   twins, and five dependencies (D1-D5) it must satisfy or report.
 - A real-thread control gates in the DETERMINISTIC tier only after G4 shows
