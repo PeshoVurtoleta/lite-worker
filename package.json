@@ -23,7 +23,7 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "test": "node --test test/Worker.test.js",
+    "test": "node --test test/Worker.test.js test/parity.test.js",
     "check": "node --check Worker.js && tsc --noEmit --strict Worker.d.ts",
     "gate": "node --expose-gc bench/gc-gate.mjs",
     "soak": "node --expose-gc bench/frame-soak.mjs",

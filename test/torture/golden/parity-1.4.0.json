@@ -2097,6 +2097,17 @@
       ]
     },
     "handle": {
+      "ctxKeys": [
+        ["close","function"],
+        ["frameChannel","function"],
+        ["off","function"],
+        ["offRaw","function"],
+        ["on","function"],
+        ["onCanvas","function"],
+        ["onRaw","function"],
+        ["post","function"],
+        ["send","function"]
+      ],
       "defineWorkerBad": {
         "ok": false,
         "name": "TypeError",
@@ -2108,6 +2119,7 @@
       "beforeSpawn": {"ok":false,"name":"Error","message":"lite-worker: call('echo') before spawn()"},
       "spawnReturnsHandle": true,
       "live": {"spawned":true,"destroyed":false},
+      "postTransfer": {"byteLength":0},
       "echo": {"ok":true,"v":{"a":1,"b":[2,3],"s":"x","z":{"$n":"-0"},"u":{"$u":true},"n":null}},
       "async": {"ok":true,"v":42},
       "throws": {"ok":false,"name":"TypeError","message":"mp boom"},
@@ -2115,6 +2127,7 @@
       "timeout": {"ok":false,"name":"Error","message":"lite-worker: call('hang') timed out after 5ms"},
       "flush": {"ok":true,"v":0},
       "pongs": [{"n":8}],
+      "sunk": [4],
       "raws": [
         {"$ta":"Float32Array","sab":false,"bits":[1069547520,3221225472]},
         {"$ab":4},
@@ -2128,6 +2141,17 @@
         "ok": false,
         "name": "Error",
         "message": "lite-worker: handle destroyed; call defineWorker() again"
+      },
+      "lifecycle": {
+        "terminateReturnsHandle": true,
+        "terminated": {"spawned":false,"destroyed":false},
+        "pendingAtTerminate": {"ok":false,"name":"Error","message":"lite-worker: worker terminated"},
+        "terminateAgain": true,
+        "callAfterTerminate": {"ok":false,"name":"Error","message":"lite-worker: call('echo') before spawn()"},
+        "respawnReturnsHandle": true,
+        "callAfterRespawn": {"ok":true,"v":3},
+        "destroyReturns": {"$u":true},
+        "pendingAtDestroy": {"ok":false,"name":"Error","message":"lite-worker: worker terminated"}
       },
       "fc": {
         "transfer": {
@@ -2394,12 +2418,14 @@
       ],
       "messages": [
         {"dir":"m>w","data":{"t":"ping","i":0,"d":{"n":7}},"transfer":0},
+        {"dir":"m>w","data":{"t":"sink","i":0,"d":{"$ab":4}},"transfer":1},
         {
           "dir": "m>w",
           "data": {"t":"echo","i":1,"d":{"a":1,"b":[2,3],"s":"x","z":{"$n":"-0"},"u":{"$u":true},"n":null}},
           "transfer": 0
         },
         {"dir":"w>m","data":{"t":"pong","i":0,"d":{"n":8}}},
+        {"dir":"w>m","data":{"t":"sunk","i":0,"d":4}},
         {
           "dir": "w>m",
           "data": {"i":1,"d":{"a":1,"b":[2,3],"s":"x","z":{"$n":"-0"},"u":{"$u":true},"n":null}}
@@ -2436,6 +2462,10 @@
         {"dir":"w>m","data":{"$ab":4}},
         {"dir":"w>m","data":{"$ta":"Uint8Array","sab":false,"bytes":[1,2,3]}},
         {"dir":"w>m","data":{"i":6,"d":0}},
+        {"dir":"m>w","data":{"t":"hang","i":1,"d":1},"transfer":0},
+        {"dir":"m>w","data":{"t":"echo","i":2,"d":3},"transfer":0},
+        {"dir":"w>m","data":{"i":2,"d":3}},
+        {"dir":"m>w","data":{"t":"hang","i":3,"d":2},"transfer":0},
         {"dir":"m>w","data":{"t":"fc","i":1,"d":{"mode":"transfer","n":5}},"transfer":0},
         {"dir":"w>m","data":{"$ab":32}},
         {"dir":"w>m","data":{"$ab":32}},

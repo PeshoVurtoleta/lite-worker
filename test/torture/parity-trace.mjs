@@ -3,21 +3,27 @@
 // trace(mod) drives a lite-worker module through a fixed, deterministic script
 // and returns a JSON-safe record of everything an observer can see: the frame
 // channel over harness syncPair (transfer + shared), post/call/ctx.frameChannel
-// over the loopback Worker mock (every main->worker and worker->main message),
-// every resolution and rejection, the export surface and the handle prototype.
-// It never records VERSION's value and never records a stack.
+// over the loopback Worker mock (every main->worker and worker->main message;
+// a main->worker transfer list is honoured, so a transferred buffer detaches),
+// post() with a transfer list, terminate() with a call pending, every
+// resolution and rejection, the export surface (keys + typeof), the handle
+// prototype and the worker ctx keys (+ typeof, from a probe worker kept out of
+// the message log). It never records VERSION's value and never records a stack.
 //
 // mpTier (wired into test/torture.mjs as "MP") gates the LIVE Worker.js against
 // a committed frozen copy of 1.4.0 (frozen/Worker-1.4.0.js) and its golden trace
 // (golden/parity-1.4.0.json):
 //   (a) the frozen copy's sha256 is the pinned one and matches the golden;
 //   (b) trace(frozen) deep-equals the golden (the harness itself is stable);
-//   (c) trace(live) -- run twice -- deep-equals the golden; a new export key or
-//       handle-prototype name is tolerated only if it is listed in ALLOWED_NEW;
+//   (c) trace(live) -- run twice -- deep-equals the golden; a new export key,
+//       handle-prototype name or ctx key is tolerated only if it is listed in
+//       ALLOWED_NEW (a frozen array, checked at every use);
 //   (d) control: the frozen text with its single `dropped++;` statement
 //       replaced by `;` (deleting it would make `transport.send(display);`
-//       the body of the `if`), imported as a data: URL, MUST diverge from the golden at a `dropped`
-//       path; an anchor count other than 1 fails "source drifted";
+//       the body of the `if`), imported as a data: URL, MUST diverge from the
+//       golden at a `dropped` path; an anchor count other than 1 fails
+//       "source drifted". test/parity.test.js runs (a)-(d) plus one spliced
+//       control per ported mutant (CONTROLS below) under `npm test`;
 //   (e) retention: 64 trace(live) cycles with every handle and channel tracked;
 //       tracker.size() returns to 0, every tracked object is collected
 //       (WeakRef), and no Worker or Blob URL survives.
@@ -41,7 +47,7 @@ import { mockRegistry, syncPair, settle, makeTracker, NOOP_CLEANUP } from "./har
 // with node:path and node:url only -- never `new URL(...)`.
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolvePath(HERE, "..", "..");
-const FROZEN_PATH = join(HERE, "frozen", "Worker-1.4.0.js");
+export const FROZEN_PATH = join(HERE, "frozen", "Worker-1.4.0.js");
 const GOLDEN_PATH = join(HERE, "golden", "parity-1.4.0.json");
 const FROZEN_URL = import.meta.resolve("./frozen/Worker-1.4.0.js");
 const LIVE_URL = import.meta.resolve("../../Worker.js");
@@ -49,15 +55,16 @@ const LIVE_URL = import.meta.resolve("../../Worker.js");
 // sha256 of `git show b595f9e:Worker.js` (the 1.4.0 build). Pinned here as well
 // as in the golden, so regenerating the frozen copy AND the golden together
 // still fails (a).
-const FROZEN_SHA256 = "b1ddbdf8412da33ed04af6b7ed7970a9a3c2bf127c14e60d0c67cf9e4938f726";
+export const FROZEN_SHA256 = "b1ddbdf8412da33ed04af6b7ed7970a9a3c2bf127c14e60d0c67cf9e4938f726";
 const SCHEMA = 1;
 const ANCHOR = "dropped++;";
 const RETENTION_CYCLES = 64;
 const LATEST_N = 64;
 
-// Export keys and handle-prototype names a later rung may ADD without breaking
-// parity. Empty at B0; B1 adds "mailbox".
-export const ALLOWED_NEW = [];
+// Export keys, handle-prototype names and worker ctx keys a later rung may ADD
+// without breaking parity. Empty at B0; B1 adds "mailbox". Frozen: a test or
+// tier cannot widen it at run time.
+export const ALLOWED_NEW = Object.freeze([]);
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 const sabOk = () => typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "undefined";
@@ -258,6 +265,7 @@ function fcErrors(frameChannel) {
 // ---------------------------------------------------------------------------
 function rpcBody(ctx) {
   ctx.on("echo", function (d) { return d; });
+  ctx.on("sink", function (d) { ctx.post("sunk", d instanceof ArrayBuffer ? d.byteLength : -1); });
   ctx.on("async", function (d) { return Promise.resolve(d + 1); });
   ctx.on("throws", function () { throw new TypeError("mp boom"); });
   ctx.on("hang", function () { return undefined; });
@@ -280,11 +288,29 @@ function fcBody(ctx) {
   ctx.on("more", function (d) { return run(d.n); });
 }
 
+// Worker ctx keys + typeof, from a probe worker spawned on the plain mock (so the
+// probe never enters the message log), sorted by key.
+function ctxProbeBody(ctx) {
+  ctx.post("keys", Object.keys(ctx).map(function (k) { return [k, typeof ctx[k]]; }));
+}
+async function ctxKeysOf(defineWorker, own) {
+  let keys = null;
+  const hp = defineWorker(ctxProbeBody);
+  const rp = own.hold(hp, "mp-handle");
+  hp.on("keys", (d) => { keys = d; });
+  hp.spawn();
+  await new Promise((r) => setImmediate(r));
+  hp.destroy(); own.drop(rp);
+  if (!Array.isArray(keys)) throw new Error("MP: the ctx-keys probe never reported");
+  return keys.slice().sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0));
+}
+
 async function handleSection(mod, own) {
   const { defineWorker } = mod;
   const out = {};
   const log = [];
   const Base = globalThis.Worker;
+  out.ctxKeys = await ctxKeysOf(defineWorker, own);
   // Installed only for the duration of this section, restored in finally.
   class RecWorker extends Base {
     constructor(url, opts) {
@@ -303,7 +329,9 @@ async function handleSection(mod, own) {
     }
     postMessage(data, transfer) {
       log.push({ dir: "m>w", data: canon(data), transfer: transfer ? transfer.length : -1 });
-      super.postMessage(data, transfer);
+      // Honour the transfer list as postMessage does: the sender's buffers detach.
+      const sent = transfer && transfer.length ? structuredClone(data, { transfer }) : data;
+      super.postMessage(sent, transfer);
     }
   }
   globalThis.Worker = RecWorker;
@@ -326,9 +354,15 @@ async function handleSection(mod, own) {
     out.live = { spawned: h.spawned, destroyed: h.destroyed };
     const pongs = [];
     const raws = [];
+    const sunk = [];
     h.on("pong", (d) => { pongs.push(canon(d)); });
+    h.on("sunk", (d) => { sunk.push(canon(d)); });
     h.onRaw((b) => { raws.push(canon(b)); });
     h.post("ping", { n: 7 });
+    // post() with a transfer list: the sender's buffer detaches (byteLength 0).
+    const ab3 = new ArrayBuffer(4);
+    h.post("sink", ab3, [ab3]);
+    out.postTransfer = { byteLength: ab3.byteLength };
     out.echo = await settleOf(h.call("echo", { a: 1, b: [2, 3], s: "x", z: -0, u: undefined, n: null }));
     out.async = await settleOf(h.call("async", 41));
     out.throws = await settleOf(h.call("throws"));
@@ -339,6 +373,7 @@ async function handleSection(mod, own) {
     h.send(new Uint8Array([1, 2, 3]), []);
     out.flush = await settleOf(h.call("echo", 0));
     out.pongs = pongs;
+    out.sunk = sunk;
     out.raws = raws;
     h.destroy(); own.drop(r1);
     out.dead = { spawned: h.spawned, destroyed: h.destroyed };
@@ -346,6 +381,25 @@ async function handleSection(mod, own) {
     out.postAfterDestroy = errOf(() => h.post("echo", 1));
     out.destroyAgain = errOf(() => h.destroy());
     out.spawnAfterDestroy = errOf(() => h.spawn());
+
+    // terminate() with a call pending, the dead window, respawn, destroy with a
+    // call pending.
+    const ht = defineWorker(rpcBody).spawn();
+    const rt = own.hold(ht, "mp-handle");
+    const hang = ht.call("hang", 1);
+    const lc = {};
+    lc.terminateReturnsHandle = ht.terminate() === ht;
+    lc.terminated = { spawned: ht.spawned, destroyed: ht.destroyed };
+    lc.pendingAtTerminate = await settleOf(hang);
+    lc.terminateAgain = ht.terminate() === ht;
+    lc.callAfterTerminate = await settleOf(ht.call("echo", 2));
+    lc.respawnReturnsHandle = ht.spawn() === ht;
+    lc.callAfterRespawn = await settleOf(ht.call("echo", 3));
+    const hang2 = ht.call("hang", 2);
+    lc.destroyReturns = canon(ht.destroy());
+    lc.pendingAtDestroy = await settleOf(hang2);
+    own.drop(rt);
+    out.lifecycle = lc;
 
     // ctx.frameChannel (worker producer) -> handle.frameChannel (main consumer)
     out.fc = {};
@@ -404,17 +458,63 @@ export async function trace(mod, tracker, stats) {
   return JSON.parse(JSON.stringify(t));
 }
 
-// Drop the ALLOWED_NEW additions from a live trace before comparing it.
-function allowNew(t, golden) {
-  for (const k of ALLOWED_NEW) {
-    if (golden.exports.some((e) => e[0] === k) || golden.handle.proto.includes(k)) {
+/**
+ * Drop the allowed additions (default ALLOWED_NEW) from a live trace before
+ * comparing it. The list must be a frozen array of strings none of which the
+ * golden already holds (fail closed).
+ */
+export function allowNew(t, golden, allowed = ALLOWED_NEW) {
+  if (!Array.isArray(allowed) || !Object.isFrozen(allowed)) {
+    throw new Error("MP: ALLOWED_NEW is not a frozen array");
+  }
+  for (const k of allowed) {
+    if (typeof k !== "string") {
+      throw new Error("MP: ALLOWED_NEW entry " + String(k) + " is not a string");
+    }
+    if (golden.exports.some((e) => e[0] === k) || golden.handle.proto.includes(k) ||
+        golden.handle.ctxKeys.some((e) => e[0] === k)) {
       throw new Error("MP: ALLOWED_NEW entry '" + k + "' is already in the golden");
     }
   }
-  t.exports = t.exports.filter((e) => !ALLOWED_NEW.includes(e[0]));
-  t.handle.proto = t.handle.proto.filter((n) => !ALLOWED_NEW.includes(n));
+  t.exports = t.exports.filter((e) => !allowed.includes(e[0]));
+  t.handle.proto = t.handle.proto.filter((n) => !allowed.includes(n));
+  t.handle.ctxKeys = t.handle.ctxKeys.filter((e) => !allowed.includes(e[0]));
   return t;
 }
+
+/**
+ * Splice one anchor in a source text; any count other than `count` (default 1)
+ * fails "source drifted". Every occurrence is replaced.
+ */
+export function splice(text, anchor, replacement, count = 1) {
+  const n = text.split(anchor).length - 1;
+  if (n !== count) {
+    throw new Error("MP: source drifted -- '" + anchor + "' occurs " + n + " times, expected " + count);
+  }
+  return text.split(anchor).join(replacement);
+}
+
+/** Import a source text as a module (data: URL; Worker.js has no imports). */
+export const importText = (text) =>
+  import("data:text/javascript;base64," + Buffer.from(text, "utf8").toString("base64"));
+
+/**
+ * Ported mutant controls (B0x), spliced into the FROZEN text: each MUST diverge
+ * from the golden at exactly `path` (its first diff). (d)'s dropped++ control
+ * stays in mutantSource().
+ */
+export const CONTROLS = Object.freeze([
+  Object.freeze({ id: "post-transfer", anchor: "w.postMessage(tx, transfer || NO_TRANSFER);",
+    to: "w.postMessage(tx, NO_TRANSFER);", path: "trace.handle.postTransfer.byteLength" }),
+  Object.freeze({ id: "terminate-message", anchor: "\"lite-worker: worker terminated\"",
+    to: "\"lite-worker: worker stopped\"",
+    path: "trace.handle.lifecycle.pendingAtTerminate.message" }),
+  Object.freeze({ id: "ctx-extra-key", anchor: "  close: function () { self.close(); }\n};",
+    to: "  close: function () { self.close(); },\n  mpExtraKey: function () {}\n};",
+    path: "trace.handle.ctxKeys[2][0]" }),
+  Object.freeze({ id: "ctx-typeof", anchor: "offRaw: __offRaw", to: "offRaw: null",
+    path: "trace.handle.ctxKeys[3][1]" }),
+]);
 
 /** The control's mutant source: the single `dropped++;` statement replaced by `;`. */
 export function mutantSource(text) {
@@ -424,7 +524,7 @@ export function mutantSource(text) {
   return text.replace(ANCHOR, ";");
 }
 
-function loadGolden(frozenSha, frozenVersion) {
+export function loadGolden(frozenSha, frozenVersion) {
   if (!existsSync(GOLDEN_PATH)) throw new Error("MP (a): golden missing at test/torture/golden/parity-1.4.0.json (fail closed)");
   const text = readFileSync(GOLDEN_PATH, "utf8");
   const g = JSON.parse(text);
