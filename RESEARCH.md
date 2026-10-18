@@ -43,14 +43,14 @@ License of the original code: the C++ listing is distributed by Vyukov under a
 reproduced in libcds and in spdlog's modified copy). The JavaScript in this
 package's prototypes is an independent re-implementation of the published
 algorithm, not a transcription of his listing. **Before any code ships:**
-re-read the original page and its code-license page at the source, and if any
-shipped code is a line-by-line translation of his listing, reproduce his
+if any shipped code is a line-by-line translation of his listing, reproduce his
 notice in the source header and in a NOTICE section of the README. Either way,
 the README, llms.txt, CHANGELOG entry and source header comment that introduce
 a Vyukov-based structure must name him and link his page. On 2026-10-18 the
 1024cores.net URL returned a redirect to a loopback address from this host, so
-the license text above is taken from the mirrors listed in section 9; confirm
-it at the source.
+the license text above was first taken from the mirrors listed in section 9;
+the maintainer then confirmed the text at the source the same day (E2 passed),
+and it matches.
 
 Related prior art (credited where used below):
 
@@ -242,8 +242,9 @@ needs a contended lane, and the racy control must fail *there*.
 Settled 2026-10-18 (decisions/0002 M-12): this CAS control applies to the MPMC
 claim and the slab bitmap only. An SPSC lane has no CAS; its controls are two
 producers on one lane, publish-before-write, and single-thread wrap / FULL
-mutants. A real-thread control fires probabilistically: M2 measures its rate
-over N runs before it may gate in the DETERMINISTIC tier.
+mutants. A real-thread control fires probabilistically: its rate is measured
+over N runs (M3; M5 for the MPMC claim, decisions/0003 T-06) before it may
+gate in the DETERMINISTIC tier.
 
 ### 4.5 Read the payload before handing the cell back
 

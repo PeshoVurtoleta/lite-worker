@@ -19,8 +19,8 @@ license, (c) 2010-2011 Dmitry Vyukov). The per-cell sequence number, the one
 CAS per operation, and the bounded, fail-on-overflow array design are his.
 Every artifact this track ships (source header, README, llms.txt, CHANGELOG
 entry, ADR) names him and links his page; see `RESEARCH.md` section 0 and
-decisions/0002 M-11. The license check at the source (E2) is PENDING and must
-pass before any M3 code.
+decisions/0002 M-11. The license check at the source (E2) passed on 2026-10-18
+(maintainer, at 1024cores.net).
 Single-producer lanes credit Leslie Lamport's SPSC ring (1983) and Paul
 Adenot's `ringbuf.js`.
 
@@ -143,7 +143,8 @@ From `RESEARCH.md` section 3:
 
 DETERMINISTIC tier, gated on every run by two separate scripts: `npm test`
 (`test/Worker.test.js`) and `npm run torture` (`node --expose-gc
-test/torture.mjs`, not part of `npm test`); full list in decisions/0002 M-12:
+test/torture.mjs`, not part of `npm test`); full list in decisions/0002 M-12;
+design in decisions/0003:
 
 - Oracle: per-producer exactly-once, in-order `(producerId, counter)` on every
   SPSC lane, both directions, Int32 and Float64. MPMC: exactly-once RESULTS
@@ -154,13 +155,18 @@ test/torture.mjs`, not part of `npm test`); full list in decisions/0002 M-12:
   (FULL and slab exhaustion returned); death between write and publish (MPMC:
   between claim and publish, and consumer death), injected by the test worker
   driving the documented layout and exiting itself, never by `terminate()`
-  timing; respawn (fresh generation, push to a retired lane returns a
-  result); both wake-up paths and the transfer fallback under the same oracle.
+  timing; respawn (fresh generation, push to a retired lane returns
+  RETIRED; a rejected SAB returns REJECTED (shared) or stays lossless on the
+  fallback (auto)); both wake-up paths and the transfer fallback under the
+  same oracle.
 - Controls that must fail: two producers on one SPSC lane; publish before
   write; a `<` position compare; a producer that ignores FULL; load + store
   instead of CAS on the MPMC claim and the slab bitmap (contended lanes); MPMC
-  recovery without job-id dedupe; a spoofed `lw:mb:*` handshake. A real-thread
-  control gates here only after M2 saw it fire in N of N runs.
+  recovery without job-id dedupe; a spoofed `lw:mb:*` handshake; a lost wake
+  (the producer reuses a stale ARMED read); a silently rejected SAB (CAP
+  accepted, then FULL forever, no nak). Each racy control has a scripted twin
+  gated every run; its real-thread twin gates only after 100/100, measured in
+  M3 (M5 for MPMC).
 - Allocation: the lite-gc-profiler retention gate (T6 shape:
   `maxBytesPerOp: 8`, `maxMajorsPerKOp: 0`) on the SAB steady state, counted on
   the main isolate and on each worker isolate (in-worker probe); a probe that
@@ -171,6 +177,7 @@ test/torture.mjs`, not part of `npm test`); full list in decisions/0002 M-12:
 STATISTICAL tier, once per release, under `quiet-lock.mjs`:
 
 - Interleaved A/B against `postMessage`, K rounds, a HOST verdict.
+- C5-r / C6-r if they miss 100/100 after tuning: K = 5, HOST exit 2.
 - CPU time reported next to messages/s.
 - A browser run as well as Node.
 
@@ -181,19 +188,20 @@ REPORTED tier:
   (`RESEARCH.md` 7).
 - `Atomics.waitAsync` engine coverage and bytes per arm (engine-owned), with
   provenance.
+- C1-r / C2-r / C10-r firing rates, if they miss 100/100.
 
 ### Order
 
 1. **M0 (done 2026-10-18):** consumer confirmed (M-D4): lite-worker-pool
    `createWorkerSet`, both directions.
 2. **M1:** ADR `decisions/0002-mailbox.md` (M-01 to M-12).
-3. **M2:** torture design (decisions/0002 M-12) written **before** code, every
-   control shown failing on a deliberately broken build, and each real-thread
-   control's firing rate measured over N runs before it may gate in the
-   DETERMINISTIC tier.
-4. **M3** (needs the maintainer's explicit approval; the E2 license check
-   first): SPSC lanes (Int32 / Float64), the bitmap slab, `mailbox()` roles in
-   both directions, both wake-up paths, lifecycle retire, transfer fallback.
+3. **M2:** the torture design (decisions/0002 M-12, expanded in
+   decisions/0003) written **before** code. Mutant builds and firing rates
+   are M3 / M5 work; M2 is the design.
+4. **M3** (needs the maintainer's explicit approval; E2 passed 2026-10-18):
+   B0 parity vectors first, then SPSC lanes (Int32 / Float64), the bitmap
+   slab, `mailbox()` roles in both directions, both wake-up paths, lifecycle
+   retire, transfer fallback.
 5. **M4:** the STATISTICAL gate and a browser measurement. README, llms.txt
    and CHANGELOG (each crediting Vyukov), and a new "What this is not" line.
 6. **M5:** the Vyukov MPMC path with its recovery (decisions/0002 M-10) for

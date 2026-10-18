@@ -13,8 +13,8 @@
   (M-12 L9); G7 MPMC re-issue is at-least-once execution (M-10); G8 the slab
   bitmap has two writers (M-06)
 - Scope: design contract only. CODE (M3 and later, any `Worker.js` edit) is
-  NOT approved by this record; it needs the maintainer's explicit approval,
-  and E2 (M-11) must pass first.
+  NOT approved by this record; it needs the maintainer's explicit approval;
+  E2 (M-11) passed on 2026-10-18 (Amendment A6).
 
 ## Context
 
@@ -43,7 +43,7 @@ Track M adds a lossless, bounded, allocation-free mailbox. The research is
 - **E1** `llms.txt:198` listed `WorkerHandle` as a runtime export; it is
   declared only in `Worker.d.ts:97`, not exported at runtime. Fixed now under CHANGELOG `[Unreleased]`; no
   docs-only release.
-- **E2** the license check at the source is PENDING (M-11).
+- **E2** the license check at the source: PASSED 2026-10-18 (M-11, A6).
 
 This record pins the contract that follows. Every claim in it is tiered
 (M-12); track M owns no measured number yet, and the numbers quoted below
@@ -263,10 +263,8 @@ per-generation) is decided at M5, measured by the re-execution count.
   SAB SPSC ring for the web.
 - **License.** Simplified BSD, (c) 2010-2011 Dmitry Vyukov, as reproduced in
   the libcds and spdlog mirrors (`RESEARCH.md` sections 0 and 9).
-- **E2 PENDING.** The source page was tried twice on 2026-10-18: once it
-  returned a redirect to a loopback address from this host; once the
-  built-in browser navigation failed. The license MUST be confirmed at the
-  source before any M3 code.
+- **E2 PASSED 2026-10-18.** The maintainer read the license at the source
+  (1024cores.net) and it matches the mirror text above; see Amendment A6.
 - **Notice.** If shipped code is a line-by-line translation of his listing,
   his notice goes in the source header and a README NOTICE section. Either
   way the source header, README, llms.txt and the CHANGELOG entry that
@@ -365,3 +363,40 @@ rounds, a HOST verdict that exits 2).
   both wake-up paths, retire, fallback; needs approval and E2) -> M4
   (STATISTICAL gate, browser measurement, docs crediting Vyukov) -> M5 (MPMC
   and its recovery).
+
+## Amendments (M2, 2026-10-18)
+
+Appended in M2; the accepted text above is unchanged except the three E2
+status lines (Scope, Context E2, the M-11 E2 bullet; A6). The full torture
+design is decisions/0003.
+
+- **A1.** The firing-rate measurement is M3 / M5 work, not M2: a measurement
+  is a mutant build, and a mutant build is code. M3 measures C1, C2, C6 and
+  C10; M5 measures C5. This overrides the M-12 rule text "M2 records each
+  control's firing rate", each "Tier pending M2 firing rate", and the
+  Consequences order line "M2 (torture design, controls proven failing)":
+  every control is first built and shown failing in M3 (M5 for C5 and C7).
+- **A2.** C1, C2, C5 and C6 each split into a scripted twin (-s, a MODEL
+  writer against the real consumer, gated every run) and a real-thread twin
+  (-r, gated in the DETERMINISTIC tier only after the G4 protocol shows it).
+  C10 (A3) splits the same way.
+- **A3.** Two controls are added to M-12. C10 (lost wake): the producer
+  reuses an ARMED value read before the TAIL store, so a wake is lost and the
+  stranded-waiter probe fails. C11 (silently rejected SAB): the trace M-08
+  used to allow, CAP accepted then FULL forever with no nak, must fail the
+  handshake predicate.
+- **A4.** REJECTED is a 5th push outcome in M-04 (alongside FULL, slab
+  exhausted, slot too small, RETIRED), maintainer Q2a. In M-08, a mismatched
+  `lw:mb:sab` gets an `lw:mb:nak` reply; in "shared" mode every later push
+  returns REJECTED, in "auto" mode delivery stays lossless on the fallback
+  (mode "transfer", never REJECTED). `lw:mb:nak` and `lw:mb:ack` join the
+  reserved `lw:mb:*` namespace. Pre-verdict pushes use the fallback until the
+  consumer's ack, then switch to the SAB; nothing is re-sent (maintainer
+  Q2b).
+- **A5.** The M2 torture design (lanes, injector, probe, controls, protocol)
+  is decisions/0003-mailbox-torture.md, Status: proposed.
+- **A6.** E2 passed 2026-10-18. The maintainer read the license at the
+  source (1024cores.net) and pasted it: Simplified (2-clause) BSD, Copyright
+  (c) 2010-2011 Dmitry Vyukov, with the FreeBSD-style "views and conclusions"
+  sentence. It matches the libcds / spdlog mirror text in `RESEARCH.md`. The
+  remaining M3 gate is the maintainer's explicit approval only.
