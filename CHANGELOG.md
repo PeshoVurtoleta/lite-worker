@@ -5,6 +5,15 @@ All notable changes to `@zakkster/lite-worker` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Documentation
+
+- **`llms.txt` export list corrected.** The Files entry listed `WorkerHandle`
+  as a runtime export of `Worker.js`; it is declared only in
+  `Worker.d.ts` and is not exported at runtime. The runtime exports are `VERSION`, `defineWorker`,
+  `frameChannel` and the default export. No code change.
+
 ## [1.4.0] - 2026-08-09
 
 Consumer telemetry parity. The producer side has exposed `published`/`free` since

@@ -1,6 +1,8 @@
 # lite-worker research: lossless cross-thread queues over a SharedArrayBuffer
 
-- **Status:** research record, not a plan. The plan is `ROADMAP.md` (track M).
+- **Status:** research record, not a plan. The plan is `ROADMAP.md` (track M);
+  the settled design is `decisions/0002-mailbox.md` (2026-10-18). Notes
+  marked "Settled 2026-10-18" are later additions; the rest is the record.
 - **Date:** 2026-10-18.
 - **Baseline:** lite-worker 1.4.0 (`7558bac`), lite-worker-pool 1.1.0 (`f53c98c`).
 - **Sources:** `../Research/BITWISE_RESEARCH.md` section 2 (candidate A) and its
@@ -67,7 +69,7 @@ lite-worker 1.4.0 has two cross-thread paths:
 
 | Path | Semantics | Where |
 |---|---|---|
-| `frameChannel` | single producer, **latest-wins**: intermediate frames drop by design | `Worker.js:148-437`; shared mode (SAB + `Atomics` seqlock) since 1.3.0 |
+| `frameChannel` | single producer, **latest-wins**: intermediate frames drop by design | `Worker.js:148-425`; shared mode (SAB + `Atomics` seqlock) since 1.3.0 |
 | `post` / `call` / `on` | lossless, but every message is a `postMessage`: structured clone + `MessageEvent` + an event-loop task | `WorkerHandle` |
 
 Latest-wins is right for rendering and wrong for streams where every item
@@ -87,11 +89,14 @@ throughput over `postMessage` is real but host-dependent (section 7).
 Layout: one `SharedArrayBuffer`, viewed as `Int32Array`s.
 
 ```text
-header  : head, tail, each on its OWN 128-byte line (see 5.3)
+header  : head, tail, each on its OWN 128-byte line (see 4.3)
 seq     : Int32Array(CAP)          CAP = 2^k, CAP < 2^31
 payload : Int32Array(CAP * W)      W int32 words per message (fixed)
 init    : seq[i] = start + i  for the CAP positions starting at `start`
 ```
+
+Settled 2026-10-18 (decisions/0002 M-03): the payload view is Int32Array or
+Float64Array, chosen per lane, 8-byte aligned; SPSC lanes need no `seq` array.
 
 Vyukov's protocol (producer side, multi-producer form):
 
@@ -165,6 +170,10 @@ Rule of thumb: **one claimant per end = no CAS on that end.** Vyukov's design
 degrades gracefully to that case (the single-consumer `dequeue` above), but
 when *both* ends have one claimant, the SPSC ring is simpler still.
 
+Settled 2026-10-18 (decisions/0002 M-02): rows 2 and 5 ship as SPSC lanes in
+both directions for lite-worker-pool `createWorkerSet`; row 4 (Vyukov MPMC)
+ships only for an opt-in pull-mode set.
+
 ---
 
 ## 4. Pitfalls (each one observed or measured)
@@ -200,6 +209,10 @@ Design consequences:
   between claim and publish; the recovery must lose nothing and duplicate
   nothing according to the oracle.
 
+Settled 2026-10-18 (decisions/0002 M-09, M-10): a dead side's lanes are
+retired and replaced (fresh SAB per generation), not reset in place; MPMC
+execution is at-least-once, results exactly-once via job-id dedupe on main.
+
 ### 4.2 The browser main thread caps a per-frame drain at CAP x fps
 
 `Atomics.wait` throws on the browser main thread, so a main-thread consumer
@@ -226,6 +239,12 @@ violations at 34-36 M ops/s. It fired (659 k to 1.1 M violations) only in a
 contended lane where every thread hits word 0. Every torture battery here
 needs a contended lane, and the racy control must fail *there*.
 
+Settled 2026-10-18 (decisions/0002 M-12): this CAS control applies to the MPMC
+claim and the slab bitmap only. An SPSC lane has no CAS; its controls are two
+producers on one lane, publish-before-write, and single-thread wrap / FULL
+mutants. A real-thread control fires probabilistically: M2 measures its rate
+over N runs before it may gate in the DETERMINISTIC tier.
+
 ### 4.5 Read the payload before handing the cell back
 
 `dequeue` must copy (or finish using) the payload before
@@ -249,9 +268,9 @@ field guide is `../Research/BITWISE_RESEARCH.md` section 8.
 ### 4.8 Cross-origin isolation is a hard prerequisite
 
 `SharedArrayBuffer` requires COOP/COEP in browsers. lite-worker already
-negotiates this for `frameChannel` (`Worker.js:187-205`): `"auto"` falls back
+negotiates this for `frameChannel` (`Worker.js:187-211`): `"auto"` falls back
 to transfer, `"shared"` throws without isolation, and only a real SAB earns
-the upgrade (`Worker.js:318-327`). A lossless channel must reuse that
+the upgrade (`Worker.js:327-328`). A lossless channel must reuse that
 negotiation, and its transfer fallback must keep the lossless contract
 (postMessage is lossless, just slower and allocating).
 
@@ -262,6 +281,10 @@ message, that encoding cost (and any allocation in it) belongs in the
 measurement. Fixed-width numeric records are the sweet spot; variable-size
 payloads need a slab (the bitmap slot allocator in `sab-alloc.mjs`) or, later,
 a TLSF heap per producer (`BITWISE_RESEARCH.md` section 4).
+
+Settled 2026-10-18 (decisions/0002 M-03, M-06): lanes carry Int32 or Float64
+words, chosen per lane, so f64 records need no encoding; variable sizes use the
+bitmap slot slab, one per producer per lane; TLSF stays on hold.
 
 ---
 
@@ -283,6 +306,14 @@ a TLSF heap per producer (`BITWISE_RESEARCH.md` section 4).
 - **Allocation:** 0 B/message on the steady-state path, via
   lite-gc-profiler / lite-leak under `node --expose-gc test/torture.mjs`. This
   is a count, not a timing, so it gates in `npm test`.
+
+Settled 2026-10-18 (decisions/0002 M-12): the lanes cover both directions,
+f64, the slab, both wake-up paths, the fallback and respawn; lane 5 injects
+death by self-exit through the documented layout, never `terminate()` timing;
+the allocation gate is the T6 retention shape (`maxBytesPerOp: 8`,
+`maxMajorsPerKOp: 0`) in `npm run torture` (not part of `npm test`), counted
+on each isolate, with 0 B/message as the expected target rather than the gate;
+the MPMC oracle checks exactly-once results per job id.
 
 ### 5.2 Throughput is STATISTICAL-tier: once per release, on a quiet host
 
@@ -324,6 +355,9 @@ a TLSF heap per producer (`BITWISE_RESEARCH.md` section 4).
 ## 6. JS-specific constraints (why this is not just a port)
 
 - No `Atomics.wait` on the browser main thread (4.2).
+- No blocking `Atomics.wait` in a lite-worker worker either: it stops that
+  worker's event loop (`post`, `lw:*`, pool `lwp:ctl`). Settled 2026-10-18,
+  decisions/0002 M-07.
 - COOP/COEP gating, with a transfer fallback (4.8). GitHub Pages can only get
   isolation through a service-worker header shim
   (`LiteWorkerPool/research/worker-set.md` E10).
@@ -381,6 +415,16 @@ measurement. The claim that holds across hosts is zero allocation per message.
    feature-detected path worth a second code path?
 3. Payload: fixed W words only, or a slab for variable sizes?
 4. Recovery granularity for MPMC on participant death (4.1).
+
+Answered 2026-10-18 (see `decisions/0002-mailbox.md`): 1. yes, a NEW opt-in
+pool pull-mode set consumes Vyukov MPMC (M-02, M-10); SPSC lanes cover both
+directions of `createWorkerSet`. 2. feature-detected on both sides; main
+falls back to a per-frame drain and a worker to a caller-driven drain; a
+worker never blocks in `Atomics.wait` (M-07); engine coverage becomes a
+REPORTED fact in M2 / M4. 3. both: Int32 or Float64 records and a bitmap slot
+slab (M-03, M-06). 4. retire the whole generation (queue + slab), re-issue unsettled jobs,
+dedupe results by job id (M-10); the owner-table granularity (per-claim
+column vs per-generation) is decided at M5.
 
 ---
 

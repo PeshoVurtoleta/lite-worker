@@ -195,7 +195,7 @@ thread or another worker; adoptCanvas is for when the worker owns the pixels.
 
 ## Files
 
-- Worker.js -- single-file ESM source (exports `defineWorker`, `frameChannel`, default export, `WorkerHandle`; methods `handle.frameChannel`, `handle.adoptCanvas`; worker-side `ctx.frameChannel`, `ctx.onCanvas`).
+- Worker.js -- single-file ESM source (runtime exports `VERSION`, `defineWorker`, `frameChannel`, and the default export `defineWorker`; methods `handle.frameChannel`, `handle.adoptCanvas`; worker-side `ctx.frameChannel`, `ctx.onCanvas`). Type `WorkerHandle` is declared in Worker.d.ts only.
 - Worker.d.ts -- full strict TypeScript declarations.
 - demo/oscilloscope.html -- off-thread waveform synthesis; tab 1 dogfoods `frameChannel` (worker produces, main draws, latest-wins), tab 2 dogfoods `adoptCanvas` (worker draws to a transferred canvas, main idle).
 - bench/frame-soak.mjs -- fast-producer/slow-consumer soak proving bounded memory + latest-wins (not shipped in the npm tarball).
