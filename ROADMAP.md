@@ -29,6 +29,10 @@ maintainer.
 
 ## Track M -- lossless cross-thread mailbox (proposal, not scheduled)
 
+**Sequencing (maintainer, 2026-10-18):** the lite-signal 1.6.0 release has the highest
+priority. Track M does not start before it ships. It is wave 5 of the suite-wide order
+(`../Research/SUMMARY.md` section 1), and lite-worker-pool track S waits on it.
+
 ### Problem
 
 - `frameChannel` (`Worker.js:148-437`) is single-producer and **latest-wins**.
