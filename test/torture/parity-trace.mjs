@@ -62,9 +62,10 @@ const RETENTION_CYCLES = 64;
 const LATEST_N = 64;
 
 // Export keys, handle-prototype names and worker ctx keys a later rung may ADD
-// without breaking parity. Empty at B0; B1 adds "mailbox". Frozen: a test or
-// tier cannot widen it at run time.
-export const ALLOWED_NEW = Object.freeze([]);
+// without breaking parity. Empty at B0; B1 adds "mailbox" (the export, the
+// handle method and the ctx key). Frozen: a test or tier cannot widen it at run
+// time.
+export const ALLOWED_NEW = Object.freeze(["mailbox"]);
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 const sabOk = () => typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "undefined";
@@ -461,7 +462,9 @@ export async function trace(mod, tracker, stats) {
 /**
  * Drop the allowed additions (default ALLOWED_NEW) from a live trace before
  * comparing it. The list must be a frozen array of strings none of which the
- * golden already holds (fail closed).
+ * golden already holds, each present on at least one live surface of `t`
+ * (export keys, handle prototype, ctx keys) -- a stale entry fails closed --
+ * and an allowed export or ctx key must be a function.
  */
 export function allowNew(t, golden, allowed = ALLOWED_NEW) {
   if (!Array.isArray(allowed) || !Object.isFrozen(allowed)) {
@@ -474,6 +477,15 @@ export function allowNew(t, golden, allowed = ALLOWED_NEW) {
     if (golden.exports.some((e) => e[0] === k) || golden.handle.proto.includes(k) ||
         golden.handle.ctxKeys.some((e) => e[0] === k)) {
       throw new Error("MP: ALLOWED_NEW entry '" + k + "' is already in the golden");
+    }
+    const ex = t.exports.find((e) => e[0] === k);
+    const cx = t.handle.ctxKeys.find((e) => e[0] === k);
+    if (!ex && !cx && !t.handle.proto.includes(k)) {
+      throw new Error("MP: ALLOWED_NEW entry '" + k + "' is on no live surface (stale allow-list entry)");
+    }
+    if ((ex && ex[1] !== "function") || (cx && cx[1] !== "function")) {
+      throw new Error("MP: ALLOWED_NEW entry '" + k + "' is not a function (export " +
+        (ex ? ex[1] : "-") + ", ctx " + (cx ? cx[1] : "-") + ")");
     }
   }
   t.exports = t.exports.filter((e) => !allowed.includes(e[0]));

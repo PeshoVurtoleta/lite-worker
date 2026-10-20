@@ -247,17 +247,17 @@ See [`CHANGELOG.md`](./CHANGELOG.md) for the full release history and [`llms.txt
 
 ## Testing
 
-**29 deterministic `node:test` cases, all pass**, over a loopback Blob/URL/Worker mock that exercises both the main-side handle and the serialized worker-side runtime.
+**73 deterministic `node:test` cases, all pass**, over a loopback Blob/URL/Worker mock that exercises both the main-side handle and the serialized worker-side runtime.
 
 ```
-npm test          # 29 node:test cases (transports, lifecycle, frameChannel, SAB, canvas)
+npm test          # 73 node:test cases (transports, lifecycle, frameChannel, SAB, canvas, MP parity, mailbox)
 npm run check     # node --check Worker.js + tsc --noEmit --strict Worker.d.ts
-npm run torture   # 10-tier torture suite (T0-T9), leak + zero-retention gates
+npm run torture   # 11-tier torture suite (T0-T9 + MP), leak + zero-retention gates
 npm run gate      # release gates: retention (both modes), orphan check, bundle guard
 npm run soak      # fast-producer/slow-consumer soak proving bounded memory
 ```
 
-`npm run torture` runs `@zakkster/lite-leak` (retention) and `@zakkster/lite-gc-profiler` (zero-alloc budget) across ten tiers: channel laws, degenerate layouts, lifecycle abuse, a real `worker_threads` seqlock under a hostile writer (T3), differential fuzz against an oracle (T5), the zero-retention gate (T6), a 4096-cycle soak (T7), lite-gl LAYOUT conformance (T8), and controls (T9) that must fail. No gate output is a FAIL. The gate numbers quoted above are regenerable on demand: `npm run gate`.
+`npm run torture` runs `@zakkster/lite-leak` (retention) and `@zakkster/lite-gc-profiler` (zero-alloc budget) across eleven tiers: channel laws, degenerate layouts, lifecycle abuse, a real `worker_threads` seqlock under a hostile writer (T3), differential fuzz against an oracle (T5), the zero-retention gate (T6), a 4096-cycle soak (T7), lite-gl LAYOUT conformance (T8), controls (T9) that must fail, and MP (behavioural parity against the frozen 1.4.0 build). No gate output is a FAIL. The gate numbers quoted above are regenerable on demand: `npm run gate`.
 
 ## What this is not
 

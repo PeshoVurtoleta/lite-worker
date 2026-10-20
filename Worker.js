@@ -425,6 +425,302 @@ function makeFrameChannel(transport, layout, options) {
 }
 
 // ---------------------------------------------------------------------------
+// mailbox: a lossless, bounded, single-producer / single-consumer lane over a
+// SharedArrayBuffer. Leslie Lamport's SPSC ring (1983): positions only, the
+// producer owns TAIL, the consumer owns HEAD, no CAS. Paul Adenot's ringbuf.js
+// is the reference SAB SPSC ring for the web. Records are W words of the
+// lane's type (Int32 or Float64); push() returns a Smi outcome instead of
+// dropping (FULL is a result, never a silent drop or an unbounded buffer).
+//
+// SELF-CONTAINED, like makeFrameChannel: serialized verbatim into the worker
+// runtime via .toString(), so it references only its arguments and globals
+// (SharedArrayBuffer, Int32Array, Float64Array, Atomics, Object, Math, Set,
+// Error).
+//
+// LAYOUT (Int32 word index; one lane per SAB in this release; a breaking change
+// if it moves -- the torture drives it directly):
+//   consumer line   [0] HEAD     next position to read (consumer-only writes)
+//                   [1] ARMED    consumer waits on TAIL when nonzero
+//   producer line  [32] TAIL     next position to write; the store publishes
+//                  [33] FBN      fallback record count before the first SAB
+//                                TAIL store (written 0 on the shared path)
+//   cold line      [64] GEN      generation, 1 at construction
+//                  [65] STATE    0 live, 1 retired
+//                  [66] CAP      capacity in records, a power of two
+//                  [67] W        words per record
+//                  [68] TYPE     0 i32, 1 f64
+//                  [69] SLOTS    slab slots (0: no slab)
+//                  [70] SLOT_BYTES  bytes per slab slot (0: no slab)
+//   payload        byte 384: CAP * W elements of TYPE; record at position p
+//                  is elements [(p & (CAP - 1)) * W, + W) of the payload view.
+// Positions are Int32 and wrap at 2^31: empty is TAIL === HEAD, full is
+// (TAIL - HEAD) | 0 === CAP; every position compare is a difference | 0.
+// roundUp128(x) = (x + 127) & ~127. elt = 4 (i32) or 8 (f64).
+//   SLOTS = 0:  stride = 384 + roundUp128(CAP * W * elt) + 128 (trailing gap)
+//   SLOTS > 0 (fixed here, not built yet): P = 384 + roundUp128(CAP * W * elt);
+//     region base B = P + 128; nWords = ceil(SLOTS / 32);
+//     hintWords = ceil(nWords / 32); HINT words at B, BITMAP words at
+//     B + 4 * hintWords (bit 1 = used, slot = 32 * word + bit; HINT bit j =
+//     bitmap word j may be free); slots base S = roundUp128(B + 4 * (hintWords
+//     + nWords)) + 128 (SLOT_BYTES % 8 === 0); stride = roundUp128(S + SLOTS *
+//     SLOT_BYTES) + 128.
+// Hot words sit 128 B apart, so they never share a line or an adjacent-line
+// prefetch pair, whatever the SAB base alignment.
+//
+// Handshake (typed plane, reserved "lw:mb:*"): the producer allocates the SAB,
+// writes the cold line and posts lw:mb:sab { id, gen, sab }; it re-posts on
+// every lw:mb:hello { id } with its id. The consumer posts lw:mb:hello at
+// construction and attaches only to a real SharedArrayBuffer whose byteLength,
+// CAP, W, TYPE, SLOTS, SLOT_BYTES match its own layout, whose GEN equals
+// msg.gen and whose STATE is 0; anything else is ignored (fail closed).
+// ---------------------------------------------------------------------------
+function makeMailbox(transport, layout, options) {
+  var P = "lite-worker: mailbox";
+  function plain(o, what, known) {
+    var pr = o !== null && typeof o === "object" ? Object.getPrototypeOf(o) : undefined;
+    if ((pr !== Object.prototype && pr !== null) || Object.getOwnPropertySymbols(o).length !== 0) {
+      throw new Error(P + " " + what + " must be a plain object");
+    }
+    var ks = Object.getOwnPropertyNames(o);
+    for (var i = 0; i < ks.length; i++) {
+      if (known.indexOf(ks[i]) >= 0) continue;
+      var best = "", bd = 3;
+      for (var j = 0; j < known.length; j++) {
+        var a = ks[i].toLowerCase(), b = known[j].toLowerCase(), row = [];
+        for (var x = 0; x <= b.length; x++) row.push(x);
+        for (var y = 1; y <= a.length; y++) {
+          var diag = row[0]; row[0] = y;
+          for (var z = 1; z <= b.length; z++) {
+            var up = row[z];
+            row[z] = Math.min(up + 1, row[z - 1] + 1, diag + (a[y - 1] === b[z - 1] ? 0 : 1));
+            diag = up;
+          }
+        }
+        if (row[b.length] < bd) { bd = row[b.length]; best = known[j]; }
+      }
+      throw new Error(P + " " + what + " has unknown key '" + ks[i] + "'" +
+        (best ? " (did you mean '" + best + "'?)" : ""));
+    }
+    // Only own keys are read: a key inherited from a polluted prototype throws.
+    for (var q = 0; q < known.length; q++) {
+      if (!Object.prototype.hasOwnProperty.call(o, known[q]) && known[q] in o) {
+        throw new Error(P + " " + what + "." + known[q] + " is inherited (only own keys are read)");
+      }
+    }
+  }
+
+  // --- cold validation: every throw fires before the first state write -----
+  plain(options, "options", ["role", "mode", "id", "onRecord"]);
+  plain(layout, "layout", ["capacity", "words", "type"]);
+  var role = options.role;
+  if (role !== "producer" && role !== "consumer") {
+    throw new Error(P + " needs options.role 'producer' or 'consumer'");
+  }
+  if (options.mode !== "shared") {
+    // "auto" and "transfer" (the credit-window fallback) are not built yet.
+    throw new Error(P + " options.mode must be 'shared'");
+  }
+  var id = options.id === undefined ? 0 : options.id;
+  // id <= 2^30 - 1 keeps the id a Smi on every engine (31-bit Smi included).
+  if (typeof id !== "number" || (id | 0) !== id || id < 0 || id > 0x3FFFFFFF) {
+    throw new Error(P + " options.id must be an integer in [0, 2^30 - 1]");
+  }
+  var onRecord = options.onRecord;
+  if (role === "consumer" && typeof onRecord !== "function") {
+    throw new Error(P + " consumer needs options.onRecord(view, offset)");
+  }
+  if (role === "producer" && onRecord !== undefined) {
+    throw new Error(P + " options.onRecord is consumer-only");
+  }
+  var cap = layout.capacity, w = layout.words;
+  if (typeof cap !== "number" || (cap | 0) !== cap || cap < 1 || cap > 0x20000000 || (cap & (cap - 1)) !== 0) {
+    throw new Error(P + " layout.capacity must be a power of two in [1, 2^29]");
+  }
+  if (typeof w !== "number" || (w | 0) !== w || w < 1) {
+    throw new Error(P + " layout.words must be an integer >= 1");
+  }
+  var type = layout.type === undefined ? "i32" : layout.type;
+  if (type !== "i32" && type !== "f64") throw new Error(P + " layout.type must be 'i32' or 'f64'");
+  var tcode = type === "f64" ? 1 : 0, elt = tcode === 1 ? 8 : 4;
+  if (cap * w * elt > 0x40000000) throw new Error(P + " payload CAP * words * " + elt + " exceeds 2^30 bytes");
+  var stride = 384 + ((cap * w * elt + 127) & ~127) + 128;
+  var coi = (typeof crossOriginIsolated === "boolean") ? crossOriginIsolated : true;
+  if (typeof SharedArrayBuffer === "undefined" || typeof Atomics === "undefined" || !coi) {
+    throw new Error(
+      P + " mode 'shared' needs SharedArrayBuffer" +
+      (typeof SharedArrayBuffer === "undefined" ? " (unavailable here)" : " under cross-origin isolation (COOP/COEP)")
+    );
+  }
+  if (!transport || typeof transport.post !== "function" || typeof transport.on !== "function") {
+    throw new Error(P + " mode 'shared' needs a transport with post()/on() to hand over the buffer");
+  }
+  // One live lane per (id, role) per transport: a producer id N and a consumer
+  // id N (the two directions) may share a transport. The hidden registry is
+  // transport.__lwMb = { producer: Set<id>, consumer: Set<id> }.
+  var hold = transport.__lwMb;
+  if (hold === undefined && !Object.isExtensible(transport)) {
+    throw new Error(P + " needs an extensible transport (it keeps a hidden lane-id registry)");
+  }
+  if (hold !== undefined && hold[role].has(id)) {
+    throw new Error(P + " " + role + " id " + id + " is already live on this transport (dispose() it first)");
+  }
+  var sabLen = Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, "byteLength").get;
+  var sab = role === "producer" ? new SharedArrayBuffer(stride) : null;
+
+  // --- state (first write) -------------------------------------------------
+  // From here every throw (a transport.on / post that throws) rolls back the
+  // registry entry and any listener it installed before rethrowing.
+  if (hold === undefined) {
+    hold = { producer: new Set(), consumer: new Set() };
+    Object.defineProperty(transport, "__lwMb", { value: hold, configurable: true });
+  }
+  var reg = hold[role];
+  reg.add(id);
+  var mask = cap - 1, n = cap * w;
+  var i32 = null, pv = null;
+
+  if (role === "producer") {
+    var gate = 0;                 // 0 live; RETIRED (4) after dispose
+    i32 = new Int32Array(sab, 0, 96);
+    pv = tcode === 1 ? new Float64Array(sab, 384, n) : new Int32Array(sab, 384, n);
+    Atomics.store(i32, 33, 0);
+    Atomics.store(i32, 65, 0);
+    Atomics.store(i32, 66, cap);
+    Atomics.store(i32, 67, w);
+    Atomics.store(i32, 68, tcode);
+    Atomics.store(i32, 69, 0);
+    Atomics.store(i32, 70, 0);
+    Atomics.store(i32, 64, 1);
+    var meta = { id: id, gen: 1, sab: sab };
+    var offHello = null;
+    try {
+      var offH = transport.on("lw:mb:hello", function (m) {
+        if (gate === 0 && m && m.id === id) transport.post("lw:mb:sab", meta);
+      });
+      if (typeof offH !== "function") throw new Error(P + " transport.on() must return an off() function");
+      offHello = offH;
+      transport.post("lw:mb:sab", meta);
+    } catch (e) {
+      gate = 4;
+      Atomics.store(i32, 65, 1);    // a consumer that already attached sees STATE retired
+      if (offHello) offHello();
+      reg.delete(id);
+      i32 = null; pv = null; meta.sab = null; sab = null;   // a listener left by a throwing on() must not pin the SAB
+      throw e;
+    }
+
+    return {
+      role: "producer", mode: "shared", id: id,
+      capacity: cap, words: w, type: type, byteLength: stride,
+      // HOT. Copy W elements src[off .. off + W) into the next slot and publish
+      // with one TAIL store. Returns 0 OK, 1 FULL, 4 RETIRED. HEAD and TAIL live
+      // in the SAB only (never cached in a JS field); ARMED is re-loaded after
+      // the TAIL store, never reused from before it (a lost wake otherwise).
+      push: function (src, off) {
+        if (gate !== 0) return gate;
+        var t = i32[32], h = Atomics.load(i32, 0);
+        if (((t - h) | 0) === cap) return 1;
+        var b = (t & mask) * w;
+        for (var k = 0; k < w; k++) pv[b + k] = src[off + k];
+        Atomics.store(i32, 32, (t + 1) | 0);
+        if (Atomics.load(i32, 1) !== 0) Atomics.notify(i32, 32, 1);
+        return 0;
+      },
+      dispose: function () {
+        if (gate !== 0) return;
+        gate = 4;
+        Atomics.store(i32, 65, 1);
+        offHello();
+        reg.delete(id);
+        i32 = null; pv = null; meta.sab = null; sab = null;
+      }
+    };
+  }
+
+  var disposed = false, draining = false, offSab = null;
+  try {
+    var offS = transport.on("lw:mb:sab", function (m) {
+      if (disposed || pv !== null || !m || m.id !== id) return;
+      var buf = m.sab, len = -1;
+      try { len = sabLen.call(buf); } catch (e) { return; }  // not a real SAB
+      if (len !== stride) return;
+      var hv = new Int32Array(buf, 0, 96);
+      if (Atomics.load(hv, 66) !== cap || Atomics.load(hv, 67) !== w || Atomics.load(hv, 68) !== tcode ||
+          Atomics.load(hv, 69) !== 0 || Atomics.load(hv, 70) !== 0 ||
+          Atomics.load(hv, 64) !== m.gen || Atomics.load(hv, 65) !== 0) return;
+      i32 = hv;
+      pv = tcode === 1 ? new Float64Array(buf, 384, n) : new Int32Array(buf, 384, n);
+      if (offSab !== null) { offSab(); offSab = null; }
+    });
+    if (typeof offS !== "function") throw new Error(P + " transport.on() must return an off() function");
+    offSab = offS;
+    if (pv !== null) { offSab(); offSab = null; }   // attached inside on() (a replaying transport)
+    transport.post("lw:mb:hello", { id: id });
+  } catch (e) {
+    // A sync transport may have attached inside post (offSab already null).
+    disposed = true;
+    if (offSab) { offSab(); offSab = null; }
+    reg.delete(id);
+    i32 = null; pv = null;
+    throw e;
+  }
+
+  return {
+    role: "consumer", mode: "shared", id: id,
+    capacity: cap, words: w, type: type, byteLength: stride,
+    get attached() { return pv !== null; },
+    // Deliver every record published before this call: onRecord(view, offset)
+    // with `view` the lane's payload view (Int32Array or Float64Array over the
+    // payload at byte 384) and the record at view[offset .. offset + W). The
+    // view is live only inside the callback; HEAD is stored after it returns,
+    // so a throw leaves that record to be redelivered by the next drain().
+    // Returns the count delivered; 0 when not attached, disposed or nested.
+    // A TAIL outside [HEAD, HEAD + CAP] is corrupt: deliver nothing, mark STATE
+    // retired, detach (attached -> false) and return 0 (fail closed).
+    drain: function () {
+      if (pv === null || draining) return 0;
+      draining = true;
+      var c = 0;
+      try {
+        var hv = i32, v = pv, h = hv[0], end = Atomics.load(hv, 32), fill = (end - h) | 0;
+        if (fill < 0 || fill > cap) {
+          Atomics.store(hv, 65, 1);
+          i32 = null; pv = null;
+          return 0;
+        }
+        while (h !== end) {
+          onRecord(v, (h & mask) * w);
+          h = (h + 1) | 0;
+          Atomics.store(hv, 0, h);
+          c++;
+          if (pv === null) break;       // disposed from inside the callback
+        }
+      } finally {
+        draining = false;
+      }
+      return c;
+    },
+    dispose: function () {
+      if (disposed) return;
+      disposed = true;
+      if (offSab) { offSab(); offSab = null; }
+      reg.delete(id);
+      i32 = null; pv = null;
+    }
+  };
+}
+
+// Push outcomes as non-writable statics on a mailbox factory (the export and
+// the worker's ctx.mailbox). Self-contained: serialized into the runtime too.
+function defineMailboxCodes(fn) {
+  var names = ["OK", "FULL", "SLAB_EXHAUSTED", "SLOT_TOO_SMALL", "RETIRED", "REJECTED"];
+  for (var i = 0; i < names.length; i++) {
+    Object.defineProperty(fn, names[i], { value: i, enumerable: true, writable: false, configurable: false });
+  }
+  return fn;
+}
+
+// ---------------------------------------------------------------------------
 // Worker-side canvas control. Serialized into the runtime via .toString(), so it
 // MUST be self-contained: only its arguments and worker globals (setTimeout,
 // clearTimeout, performance). Paired with the main-side WorkerHandle.adoptCanvas,
@@ -526,14 +822,17 @@ function makeCanvasControl(ctx, cb, options) {
 
 function buildSource(moduleFn) {
   const body = moduleFn.toString();
-  // Inject frameChannel and the canvas control into the worker from the single
-  // main-side definitions, so there is exactly one implementation of each and no
-  // drift between the two sides.
+  // Inject frameChannel, the canvas control and the mailbox into the worker from
+  // the single main-side definitions, so there is exactly one implementation of
+  // each and no drift between the two sides.
   const frame =
     "\nvar __makeFrameChannel = (" + makeFrameChannel.toString() + ");\n" +
     "__ctx.frameChannel = function (l, o) { return __makeFrameChannel(__ctx, l, o); };\n" +
     "\nvar __makeCanvasControl = (" + makeCanvasControl.toString() + ");\n" +
-    "__ctx.onCanvas = function (cb, o) { return __makeCanvasControl(__ctx, cb, o); };\n";
+    "__ctx.onCanvas = function (cb, o) { return __makeCanvasControl(__ctx, cb, o); };\n" +
+    "\nvar __makeMailbox = (" + makeMailbox.toString() + ");\n" +
+    "__ctx.mailbox = function (l, o) { return __makeMailbox(__ctx, l, o); };\n" +
+    "(" + defineMailboxCodes.toString() + ")(__ctx.mailbox);\n";
   // ;( ... )(__ctx) invokes the user module fn with the worker channel.
   return WORKER_RUNTIME + frame + "\n;(" + body + ")(__ctx);\n";
 }
@@ -669,6 +968,15 @@ class WorkerHandle {
   // before spawn). The worker side uses ctx.frameChannel(layout, options).
   frameChannel(layout, options) {
     return makeFrameChannel(this, layout, options);
+  }
+
+  // --- mailbox -------------------------------------------------------------
+
+  // Build one end of a lossless SPSC mailbox lane (shared mode) over this
+  // handle's typed plane. The other end is ctx.mailbox(layout, options) in the
+  // worker with the same options.id. Reserved typed messages: "lw:mb:*".
+  mailbox(layout, options) {
+    return makeMailbox(this, layout, options);
   }
 
   // Hand a canvas to the worker via transferControlToOffscreen and keep it in
@@ -831,5 +1139,35 @@ export function defineWorker(moduleFn, options = {}) {
 export function frameChannel(transport, layout, options) {
   return makeFrameChannel(transport, layout, options);
 }
+
+/**
+ * Build one end of a lossless, bounded, single-producer / single-consumer
+ * mailbox lane over a SharedArrayBuffer (Lamport's SPSC ring). `transport` is a
+ * WorkerHandle (main thread) or the worker-side `ctx` -- anything exposing
+ * `post(type, data)` and `on(type, fn) -> off`; the SAB handshake rides the
+ * typed plane ("lw:mb:*" is reserved). Both ends use the same `options.id`
+ * (default 0, at most 2^30 - 1); a second live lane with the same id AND role
+ * on one transport throws (a producer and a consumer may share an id).
+ *
+ * `layout` is `{ capacity, words, type }`: capacity a power of two in
+ * [1, 2^29], words per record an integer >= 1, type "i32" (default) or "f64".
+ * Only `mode: "shared"` exists in this release (it is required).
+ *
+ * Producer: `push(src, off)` copies `words` elements of `src` from `off` and
+ * returns a Smi outcome -- mailbox.OK (0) or mailbox.FULL (1), mailbox.RETIRED
+ * (4) after dispose(); never throws on a valid typed array, never drops silently. An i32 lane stores
+ * ToInt32 of each value (no validation). Consumer: `drain()` calls
+ * `options.onRecord(view, offset)` once per published record, `view` being the
+ * lane's payload view (Int32Array / Float64Array) valid only inside the
+ * callback, and returns the count delivered.
+ *
+ * @param {{ post: Function, on: Function }} transport
+ * @param {{ capacity: number, words: number, type?: "i32"|"f64" }} layout
+ * @param {{ role: "producer"|"consumer", mode: "shared", id?: number, onRecord?: Function }} options
+ */
+export function mailbox(transport, layout, options) {
+  return makeMailbox(transport, layout, options);
+}
+defineMailboxCodes(mailbox);
 
 export default defineWorker;

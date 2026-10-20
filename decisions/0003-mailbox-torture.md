@@ -377,6 +377,53 @@ proposed; none is code yet.
   text (deleting it would make `transport.send(display);` the body of the
   `if`); an anchor count other than 1
   fails "source drifted", a mutant equal to the golden fails "decorative".
+  B0x (test-only) then added: the MP trace also records ctx keys +
+  typeof, post with a transfer list, and terminate / destroy with a call
+  pending; ALLOWED_NEW is frozen and covers export keys, handle methods AND
+  ctx keys, so one "mailbox" ALLOWED_NEW entry covers the export, the
+  handle method and the ctx key; test/parity.test.js runs MP under
+  `npm test` with the `dropped++` control plus 4 spliced must-fail
+  controls.
+- **B1 note (2026-10-19).** B1 adds `makeMailbox`, the i32 / f64 shared
+  path only (no fallback, ack / nak, slab or waitAsync), the `mailbox`
+  export, `handle.mailbox` and `ctx.mailbox`; ALLOWED_NEW is
+  `Object.freeze(["mailbox"])`. Maintainer API picks: layout
+  `{ capacity, words, type }`; the consumer's `options.onRecord(view,
+  off)` with `drain()` returning the count; `options.id` (default 0,
+  at most 2^29 - 1; superseded in round 2), one live lane per (id, role)
+  per transport. The
+  SPLICE anchors, each exactly once in `Worker.js` and in a built
+  `_source`:
+  - A_PUBLISH `Atomics.store(i32, 32, (t + 1) | 0);`
+  - A_FULL `if (((t - h) | 0) === cap) return 1;`
+  - A_WRAP `((t - h) | 0)` (it occurs only inside A_FULL)
+  - A_ARMED `if (Atomics.load(i32, 1) !== 0) Atomics.notify(i32, 32, 1);`
+  - A_CLAIM (the slab CAS) is recorded by B5, which builds the slab.
+- **Round 2 (2026-10-20).** Maintainer picks: `options.id` is an integer
+  in [0, 2^30 - 1], with one registry Set per role keyed by id (this
+  replaces the coder's 2^29 - 1 bound and the id * 2 + side key); drain
+  fails closed when (TAIL - HEAD) falls outside [0, CAP]: it delivers
+  nothing, sets STATE to 1, detaches and returns 0. Construction is now
+  rollback-safe (R1: a throw from the SAB allocation, on() or post()
+  leaves no registry entry and no listener it can remove; an on() that
+  installs a listener and then throws is beyond reach, so the consumer's
+  handler is inert once the constructor has thrown) and reads own keys
+  only (R2: an inherited option or layout key throws). Open: the WorkerHandle
+  hidden-class nit (the late `__lwMb` field) is deferred.
+  **Round 3 (2026-10-20).** on() must return an off() function (else the
+  constructor throws and rolls back); a transport that replays
+  lw:mb:sab inside on() attaches cleanly.
+
+  D2's stride, fixed: roundUp128(x) = (x + 127) & ~127, elt 4 (i32) or
+  8 (f64). With SLOTS = 0, stride = 384 + roundUp128(CAP * W * elt) + 128.
+  With SLOTS > 0 (D3; formula fixed now, built in B5):
+  P = 384 + roundUp128(CAP * W * elt); region base B = P + 128;
+  nWords = ceil(SLOTS / 32); hintWords = ceil(nWords / 32); the HINT
+  words start at B and the BITMAP words at B + 4 * hintWords; slots base
+  S = roundUp128(B + 4 * (hintWords + nWords)) + 128; stride =
+  roundUp128(S + SLOTS * SLOT_BYTES) + 128. The `drain()` view is the
+  payload-only typed array (byte 384 on); the record at position p is
+  elements `[(p & (CAP - 1)) * W, + W)`.
 
 Deltas to decisions/0002 M-03 (explicit, not silent):
 

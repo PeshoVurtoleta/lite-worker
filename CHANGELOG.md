@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests
+
+- **B0x: MP parity trace widened.** The MP tier (behavioural parity vs the
+  frozen 1.4.0 build) now also records worker ctx keys + typeof, a post with
+  a transfer list, and terminate / destroy with a call pending. ALLOWED_NEW
+  is frozen and covers export keys, handle methods AND ctx keys.
+- `test/parity.test.js` runs MP under `npm test`, with the `dropped++`
+  control plus 4 spliced must-fail controls.
+- `test/mailbox.test.js`: 33 unit tests for the in-progress `mailbox()`
+  SPSC lane (shared path): FIFO / wrap / full, fail-closed attach, the id
+  registry, construction rollback (incl. on() must return a function),
+  own-key options, drain TAIL bound, and
+  a ctx.mailbox round-trip with a real worker.
+
 ### Documentation
 
 - **`llms.txt` export list corrected.** The Files entry listed `WorkerHandle`

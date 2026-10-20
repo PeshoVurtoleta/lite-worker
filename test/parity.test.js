@@ -69,20 +69,24 @@ for (const c of CONTROLS) {
   });
 }
 
-test("MP ALLOWED_NEW: frozen empty array; allowNew guards and filters ctx keys", T, async () => {
+test("MP ALLOWED_NEW: frozen ['mailbox']; allowNew guards, filters, rejects stale entries", T, async () => {
   const g = (await golden()).trace;
   assert.ok(Array.isArray(ALLOWED_NEW) && Object.isFrozen(ALLOWED_NEW));
-  assert.equal(ALLOWED_NEW.length, 0, "B0 allows no new keys");
+  assert.deepEqual([...ALLOWED_NEW], ["mailbox"], "B1 allows exactly mailbox");
   const clone = () => JSON.parse(JSON.stringify(g));
   assert.throws(() => allowNew(clone(), g, ["mailbox"]), /not a frozen array/);
   const arrayLike = Object.freeze({ 0: "mailbox", length: 1 });
   assert.throws(() => allowNew(clone(), g, arrayLike), /not a frozen array/);
   assert.throws(() => allowNew(clone(), g, Object.freeze([1])), /not a string/);
   assert.throws(() => allowNew(clone(), g, Object.freeze(["post"])), /already in the golden/);
+  assert.throws(() => allowNew(clone(), g), /on no live surface/);
+  assert.equal(firstDiff(allowNew(clone(), g, Object.freeze([])), g, "trace"), null);
   const t = clone();
   t.handle.ctxKeys.splice(2, 0, ["mailbox", "function"]);
-  assert.equal(firstDiff(allowNew(clone(), g), g, "trace"), null);
-  const unlisted = firstDiff(allowNew(JSON.parse(JSON.stringify(t)), g), g, "trace");
+  const unlisted = firstDiff(allowNew(JSON.parse(JSON.stringify(t)), g, Object.freeze([])), g, "trace");
   assert.equal(unlisted.path, "trace.handle.ctxKeys[2][0]");
-  assert.equal(firstDiff(allowNew(t, g, Object.freeze(["mailbox"])), g, "trace"), null);
+  assert.equal(firstDiff(allowNew(JSON.parse(JSON.stringify(t)), g), g, "trace"), null);
+  const bad = clone();
+  bad.handle.ctxKeys.splice(2, 0, ["mailbox", "object"]);
+  assert.throws(() => allowNew(bad, g), /not a function/);
 });
