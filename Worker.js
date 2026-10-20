@@ -572,7 +572,10 @@ function makeMailbox(transport, layout, options) {
   // registry entry and any listener it installed before rethrowing.
   if (hold === undefined) {
     hold = { producer: new Set(), consumer: new Set() };
-    Object.defineProperty(transport, "__lwMb", { value: hold, configurable: true });
+    // A WorkerHandle pre-declares the slot (no late hidden class).
+    var hd = Object.getOwnPropertyDescriptor(transport, "__lwMb");
+    if (hd !== undefined && hd.writable === true) transport.__lwMb = hold;
+    else Object.defineProperty(transport, "__lwMb", { value: hold, configurable: true });
   }
   var reg = hold[role];
   reg.add(id);
@@ -603,9 +606,11 @@ function makeMailbox(transport, layout, options) {
     } catch (e) {
       gate = 4;
       Atomics.store(i32, 65, 1);    // a consumer that already attached sees STATE retired
-      if (offHello) offHello();
       reg.delete(id);
       i32 = null; pv = null; meta.sab = null; sab = null;   // a listener left by a throwing on() must not pin the SAB
+      // Teardown first, off() last and once: e wins over a throwing off().
+      var offR = offHello; offHello = null;
+      if (offR) { try { offR(); } catch (e2) { /* lane already inert */ } }
       throw e;
     }
 
@@ -630,9 +635,10 @@ function makeMailbox(transport, layout, options) {
         if (gate !== 0) return;
         gate = 4;
         Atomics.store(i32, 65, 1);
-        offHello();
         reg.delete(id);
         i32 = null; pv = null; meta.sab = null; sab = null;
+        var off = offHello; offHello = null;
+        off();                        // once, after teardown: its throw reaches the caller
       }
     };
   }
@@ -650,18 +656,20 @@ function makeMailbox(transport, layout, options) {
           Atomics.load(hv, 64) !== m.gen || Atomics.load(hv, 65) !== 0) return;
       i32 = hv;
       pv = tcode === 1 ? new Float64Array(buf, 384, n) : new Int32Array(buf, 384, n);
-      if (offSab !== null) { offSab(); offSab = null; }
+      if (offSab !== null) { var o = offSab; offSab = null; o(); }   // clear first: off() runs once
     });
     if (typeof offS !== "function") throw new Error(P + " transport.on() must return an off() function");
     offSab = offS;
-    if (pv !== null) { offSab(); offSab = null; }   // attached inside on() (a replaying transport)
+    if (pv !== null) { var offA = offSab; offSab = null; offA(); }   // attached inside on() (a replaying transport)
     transport.post("lw:mb:hello", { id: id });
   } catch (e) {
     // A sync transport may have attached inside post (offSab already null).
     disposed = true;
-    if (offSab) { offSab(); offSab = null; }
     reg.delete(id);
     i32 = null; pv = null;
+    // Teardown first, off() last and once: e wins over a throwing off().
+    var offC = offSab; offSab = null;
+    if (offC) { try { offC(); } catch (e2) { /* lane already inert */ } }
     throw e;
   }
 
@@ -703,9 +711,10 @@ function makeMailbox(transport, layout, options) {
     dispose: function () {
       if (disposed) return;
       disposed = true;
-      if (offSab) { offSab(); offSab = null; }
       reg.delete(id);
       i32 = null; pv = null;
+      var off = offSab; offSab = null;
+      if (off) off();                 // once, after teardown: its throw reaches the caller
     }
   };
 }
@@ -849,6 +858,7 @@ class WorkerHandle {
 
     this._worker = null;
     this._dead = false;
+    this.__lwMb = undefined;    // mailbox lane-id registry slot (declared: one hidden class)
 
     this._h = new Map();        // type -> Set(handler) for worker->main pushes
     this._raw = new Set();      // raw buffer handlers

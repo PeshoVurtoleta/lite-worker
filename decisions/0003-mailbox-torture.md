@@ -413,6 +413,18 @@ proposed; none is code yet.
   **Round 3 (2026-10-20).** on() must return an off() function (else the
   constructor throws and rolls back); a transport that replays
   lw:mb:sab inside on() attaches cleanly.
+  **E6 (2026-10-20).** Every off() call site clears its field before the
+  call, so off() runs at most once per lane; every teardown off() site
+  (both constructor catches, both dispose()) also runs after the rest of
+  the teardown (gate / disposed, the producer's STATE store, registry
+  delete, view and SAB nulling), so a throwing off() can no longer leave
+  the id taken. In a constructor
+  catch the original error is rethrown and off()'s throw is dropped (the
+  lane is already inert); from dispose() off()'s throw reaches the caller
+  and a second dispose() is a no-op. The hidden-class nit is closed for
+  WorkerHandle (the constructor declares the `__lwMb` slot); the worker's
+  `__ctx` keeps the late defineProperty, since declaring it there changes
+  the MP trace (ctxKeys).
 
   D2's stride, fixed: roundUp128(x) = (x + 127) & ~127, elt 4 (i32) or
   8 (f64). With SLOTS = 0, stride = 384 + roundUp128(CAP * W * elt) + 128.

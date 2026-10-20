@@ -541,3 +541,113 @@ test("R1: a consumer whose on() installs then throws is disposed (handler inert)
   fns.forEach((f) => f(m));
   assert.equal(reads, 0, "a disposed handler short-circuits before reading m.id");
 });
+
+// ===========================================================================
+// E6: a throwing off() is called once and frees the id
+// (from .handoff/e6/spec.md ASSERTIONS A1-A6; each fails on the pre-E6 build)
+// ===========================================================================
+
+const CFG6 = { capacity: 4, words: 1 };
+// A real producer on a throwaway pair yields a valid lw:mb:sab message.
+function validSabMsg() {
+  const [a, b] = syncPair(true);
+  let msg = null; b.on("lw:mb:sab", (m) => { msg = m; });
+  mailbox(a, CFG6, { role: "producer", mode: "shared" });
+  return msg;
+}
+// Fake transport: records handlers, hands out the throwing off.
+function fake6(hooks) {
+  const t = {
+    offCalls: 0, h: new Map(),
+    post(type, d) { if (hooks && hooks.post) hooks.post(type, d); },
+    on(type, fn) {
+      if (hooks && hooks.on) hooks.on(type, fn);
+      t.h.set(type, fn);
+      return () => { t.offCalls++; throw new Error("off-boom"); };
+    },
+  };
+  return t;
+}
+const cons6 = (t) => mailbox(t, CFG6, { role: "consumer", mode: "shared", onRecord() {} });
+const prod6 = (t) => mailbox(t, CFG6, { role: "producer", mode: "shared" });
+// The id is free iff a new lane of the role constructs on the same transport.
+function freeAfter6(t, role) {
+  t.post = () => {}; t.on = () => () => {};
+  assert.ok(role === "consumer" ? cons6(t) : prod6(t), role + ": id freed");
+}
+
+test("E6 A1: consumer dispose() throws off once; second is a no-op; id freed", T, () => {
+  const t = fake6();
+  const c = cons6(t);
+  assert.throws(() => c.dispose(), /off-boom/);
+  assert.doesNotThrow(() => c.dispose());
+  assert.equal(t.offCalls, 1);
+  freeAfter6(t, "consumer");
+});
+
+test("E6 A2: consumer ctor, post throws: post-boom wins, off once, id freed", T, () => {
+  const t = fake6({ post(type) { if (type === "lw:mb:hello") throw new Error("post-boom"); } });
+  assert.throws(() => cons6(t), /post-boom/);
+  assert.equal(t.offCalls, 1);
+  freeAfter6(t, "consumer");
+});
+
+test("E6 A3: consumer replay detach throws off-boom; off once; id freed", T, () => {
+  const msg = validSabMsg();
+  const t = fake6({ on(type, fn) { if (type === "lw:mb:sab") fn(msg); } });
+  assert.throws(() => cons6(t), /off-boom/);
+  assert.equal(t.offCalls, 1);
+  freeAfter6(t, "consumer");
+});
+
+test("E6 A4: consumer listener detach throws; attached; dispose does not re-call off", T, () => {
+  const msg = validSabMsg();
+  const t = fake6();
+  const c = cons6(t);
+  assert.throws(() => t.h.get("lw:mb:sab")(msg), /off-boom/);
+  assert.equal(c.attached, true);
+  assert.equal(t.offCalls, 1);
+  c.dispose();
+  assert.equal(t.offCalls, 1, "off not called a second time");
+  freeAfter6(t, "consumer");
+});
+
+test("E6 A5: producer ctor, post throws: post-boom wins, off once, id freed", T, () => {
+  const t = fake6({ post(type) { if (type === "lw:mb:sab") throw new Error("post-boom"); } });
+  assert.throws(() => prod6(t), /post-boom/);
+  assert.equal(t.offCalls, 1);
+  freeAfter6(t, "producer");
+});
+
+test("E6 A6: producer dispose() throws off once; second no-op; push RETIRED; id freed", T, () => {
+  const t = fake6();
+  const p = prod6(t);
+  assert.throws(() => p.dispose(), /off-boom/);
+  assert.doesNotThrow(() => p.dispose());
+  assert.equal(t.offCalls, 1);
+  assert.equal(p.push([1], 0), 4);
+  freeAfter6(t, "producer");
+});
+
+
+test("E6 A7: teardown runs before a throwing off(); the listener it leaves is inert", T, () => {
+  for (const viaCtor of [true, false]) {
+    let meta = null, atOff;
+    const t = fake6({ post(type, d) {
+      if (type !== "lw:mb:sab") return;
+      if (meta !== null) throw new Error("posted after teardown");
+      meta = d; if (viaCtor) throw new Error("post-boom");
+    } });
+    const on6 = t.on;
+    t.on = (type, fn) => { const off = on6(type, fn); return () => { atOff = meta.sab; off(); }; };
+    if (viaCtor) assert.throws(() => prod6(t), /post-boom/);
+    else assert.throws(() => prod6(t).dispose(), /off-boom/);
+    assert.equal(atOff, null, "SAB unpinned before off() runs");
+    t.h.get("lw:mb:hello")({ id: 0 });   // a retired producer's listener never re-posts
+  }
+  const t = fake6();
+  const c = cons6(t);
+  assert.throws(() => c.dispose(), /off-boom/);
+  t.h.get("lw:mb:sab")(validSabMsg());
+  assert.equal(c.attached, false, "a disposed consumer's leftover listener stays inert");
+});

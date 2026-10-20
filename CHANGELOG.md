@@ -15,10 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is frozen and covers export keys, handle methods AND ctx keys.
 - `test/parity.test.js` runs MP under `npm test`, with the `dropped++`
   control plus 4 spliced must-fail controls.
-- `test/mailbox.test.js`: 33 unit tests for the in-progress `mailbox()`
+- `test/mailbox.test.js`: 40 unit tests for the in-progress `mailbox()`
   SPSC lane (shared path): FIFO / wrap / full, fail-closed attach, the id
   registry, construction rollback (incl. on() must return a function),
-  own-key options, drain TAIL bound, and
+  own-key options, drain TAIL bound, a throwing transport off() (called
+  once, after teardown; the constructor keeps the original error), and
   a ctx.mailbox round-trip with a real worker.
 
 ### Documentation

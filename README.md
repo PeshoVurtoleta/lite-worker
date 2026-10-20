@@ -247,10 +247,10 @@ See [`CHANGELOG.md`](./CHANGELOG.md) for the full release history and [`llms.txt
 
 ## Testing
 
-**73 deterministic `node:test` cases, all pass**, over a loopback Blob/URL/Worker mock that exercises both the main-side handle and the serialized worker-side runtime.
+**80 deterministic `node:test` cases, all pass**, over a loopback Blob/URL/Worker mock that exercises both the main-side handle and the serialized worker-side runtime.
 
 ```
-npm test          # 73 node:test cases (transports, lifecycle, frameChannel, SAB, canvas, MP parity, mailbox)
+npm test          # 80 node:test cases (transports, lifecycle, frameChannel, SAB, canvas, MP parity, mailbox)
 npm run check     # node --check Worker.js + tsc --noEmit --strict Worker.d.ts
 npm run torture   # 11-tier torture suite (T0-T9 + MP), leak + zero-retention gates
 npm run gate      # release gates: retention (both modes), orphan check, bundle guard
