@@ -516,9 +516,9 @@ function makeMailbox(transport, layout, options) {
   if (role !== "producer" && role !== "consumer") {
     throw new Error(P + " needs options.role 'producer' or 'consumer'");
   }
-  if (options.mode !== "shared") {
-    // "auto" and "transfer" (the credit-window fallback) are not built yet.
-    throw new Error(P + " options.mode must be 'shared'");
+  var mode = options.mode === undefined ? "auto" : options.mode;
+  if (mode !== "auto" && mode !== "shared" && mode !== "transfer") {
+    throw new Error(P + " options.mode must be 'auto', 'shared' or 'transfer'");
   }
   var id = options.id === undefined ? 0 : options.id;
   // id <= 2^30 - 1 keeps the id a Smi on every engine (31-bit Smi included).
@@ -545,14 +545,17 @@ function makeMailbox(transport, layout, options) {
   if (cap * w * elt > 0x40000000) throw new Error(P + " payload CAP * words * " + elt + " exceeds 2^30 bytes");
   var stride = 384 + ((cap * w * elt + 127) & ~127) + 128;
   var coi = (typeof crossOriginIsolated === "boolean") ? crossOriginIsolated : true;
-  if (typeof SharedArrayBuffer === "undefined" || typeof Atomics === "undefined" || !coi) {
+  var canShare = typeof SharedArrayBuffer !== "undefined" && typeof Atomics !== "undefined" && coi;
+  if (mode === "shared" && !canShare) {
     throw new Error(
       P + " mode 'shared' needs SharedArrayBuffer" +
       (typeof SharedArrayBuffer === "undefined" ? " (unavailable here)" : " under cross-origin isolation (COOP/COEP)")
     );
   }
+  // Every mode rides the typed plane: the handshake, the fallback records and
+  // the credit acks are all post()/on() messages.
   if (!transport || typeof transport.post !== "function" || typeof transport.on !== "function") {
-    throw new Error(P + " mode 'shared' needs a transport with post()/on() to hand over the buffer");
+    throw new Error(P + " needs a transport with post()/on() (the handshake and the fallback ride the typed plane)");
   }
   // One live lane per (id, role) per transport: a producer id N and a consumer
   // id N (the two directions) may share a transport. The hidden registry is
@@ -564,8 +567,11 @@ function makeMailbox(transport, layout, options) {
   if (hold !== undefined && hold[role].has(id)) {
     throw new Error(P + " " + role + " id " + id + " is already live on this transport (dispose() it first)");
   }
-  var sabLen = Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, "byteLength").get;
-  var sab = role === "producer" ? new SharedArrayBuffer(stride) : null;
+  // This end may use a SAB: "transfer" never does; "auto" only where it can.
+  var share = mode !== "transfer" && canShare;
+  var sabLen = typeof SharedArrayBuffer !== "undefined"
+    ? Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, "byteLength").get : null;
+  var sab = role === "producer" && share ? new SharedArrayBuffer(stride) : null;
 
   // --- state (first write) -------------------------------------------------
   // From here every throw (a transport.on / post that throws) rolls back the
@@ -581,48 +587,115 @@ function makeMailbox(transport, layout, options) {
   reg.add(id);
   var mask = cap - 1, n = cap * w;
   var i32 = null, pv = null;
+  var vd = false;                 // verdict latch: the first STATE-0 offer decides, once
+  // Run every off() once, after teardown. rethrow: the first throw reaches the
+  // caller after all have run; otherwise every throw is dropped.
+  function offAll(a, b, c, rethrow) {
+    var fs = [a, b, c], err = null, bad = false;
+    for (var q = 0; q < 3; q++) {
+      if (fs[q] === null) continue;
+      try { fs[q](); } catch (e) { if (!bad) { bad = true; err = e; } }
+    }
+    if (bad && rethrow) throw err;
+  }
+  function onOff(type, fn) {
+    var o = transport.on(type, fn);
+    if (typeof o !== "function") throw new Error(P + " transport.on() must return an off() function");
+    return o;
+  }
 
   if (role === "producer") {
-    var gate = 0;                 // 0 live; RETIRED (4) after dispose
-    i32 = new Int32Array(sab, 0, 96);
-    pv = tcode === 1 ? new Float64Array(sab, 384, n) : new Int32Array(sab, 384, n);
-    Atomics.store(i32, 33, 0);
-    Atomics.store(i32, 65, 0);
-    Atomics.store(i32, 66, cap);
-    Atomics.store(i32, 67, w);
-    Atomics.store(i32, 68, tcode);
-    Atomics.store(i32, 69, 0);
-    Atomics.store(i32, 70, 0);
-    Atomics.store(i32, 64, 1);
+    // gate: 0 SAB, -1 fallback (pre-verdict, or "transfer"), 4 RETIRED,
+    // 5 REJECTED (a "shared" lane the consumer naked).
+    var gate = -1;
+    var open = false, credit = 0, fbn = 0;
+    if (sab !== null) {
+      i32 = new Int32Array(sab, 0, 96);
+      pv = tcode === 1 ? new Float64Array(sab, 384, n) : new Int32Array(sab, 384, n);
+      Atomics.store(i32, 33, 0);
+      Atomics.store(i32, 65, 0);
+      Atomics.store(i32, 66, cap);
+      Atomics.store(i32, 67, w);
+      Atomics.store(i32, 68, tcode);
+      Atomics.store(i32, 69, 0);
+      Atomics.store(i32, 70, 0);
+      Atomics.store(i32, 64, 1);
+    }
     var meta = { id: id, gen: 1, sab: sab };
-    var offHello = null;
+    var offHello = null, offAck = null, offNak = null;
+    // Teardown of the SAB side: a consumer that already attached sees STATE
+    // retired; a listener left by a throwing off() must not pin the SAB.
+    var drop = function () {
+      if (i32 !== null) Atomics.store(i32, 65, 1);
+      i32 = null; pv = null; meta.sab = null; sab = null;
+    };
+    // The window opens to CAP on the first consumer message for the id: the
+    // typed plane drops a record posted before the consumer's listener exists.
+    var opened = function () { if (!open) { open = true; credit = cap; } };
+    // Cold path of push: gate !== 0. Fallback: one lw:mb:rec per accepted
+    // record (a fresh typed array of W elements), credit-bounded.
+    var slow = function (src, off) {
+      if (gate !== -1) return gate;
+      if (credit === 0) return 1;
+      var v = tcode === 1 ? new Float64Array(w) : new Int32Array(w);
+      for (var k = 0; k < w; k++) v[k] = src[off + k];
+      transport.post("lw:mb:rec", { id: id, v: v });
+      credit--;                   // after post() returned: a throw accepts nothing
+      fbn = (fbn + 1) | 0;
+      return 0;
+    };
     try {
-      var offH = transport.on("lw:mb:hello", function (m) {
-        if (gate === 0 && m && m.id === id) transport.post("lw:mb:sab", meta);
+      offHello = onOff("lw:mb:hello", function (m) {
+        if (gate > 0 || !m || m.id !== id) return;
+        opened();
+        if (!vd) transport.post("lw:mb:sab", meta);
       });
-      if (typeof offH !== "function") throw new Error(P + " transport.on() must return an off() function");
-      offHello = offH;
+      offAck = onOff("lw:mb:ack", function (m) {
+        if (gate > 0 || !m || m.id !== id || m.gen !== 1) return;
+        opened();
+        var k = m.credit;
+        if (typeof k !== "number" || (k | 0) !== k || k < 0 || k > cap - credit) return;
+        credit += k;
+        if (m.attached === true && !vd && i32 !== null) {
+          vd = true;
+          Atomics.store(i32, 33, fbn);    // FBN before the first TAIL store
+          gate = 0;
+          if (mode === "auto") mode = "shared";
+        }
+      });
+      offNak = onOff("lw:mb:nak", function (m) {
+        if (gate > 0 || !m || m.id !== id || m.gen !== 1) return;
+        opened();
+        if (vd) return;
+        vd = true;
+        drop();
+        if (mode === "shared") gate = 5;
+        else mode = "transfer";
+      });
       transport.post("lw:mb:sab", meta);
     } catch (e) {
       gate = 4;
-      Atomics.store(i32, 65, 1);    // a consumer that already attached sees STATE retired
+      drop();
       reg.delete(id);
-      i32 = null; pv = null; meta.sab = null; sab = null;   // a listener left by a throwing on() must not pin the SAB
       // Teardown first, off() last and once: e wins over a throwing off().
-      var offR = offHello; offHello = null;
-      if (offR) { try { offR(); } catch (e2) { /* lane already inert */ } }
+      var oh = offHello, oa = offAck, on = offNak;
+      offHello = null; offAck = null; offNak = null;
+      offAll(oh, oa, on, false);
       throw e;
     }
 
     return {
-      role: "producer", mode: "shared", id: id,
+      role: "producer", id: id,
       capacity: cap, words: w, type: type, byteLength: stride,
+      get mode() { return mode; },
+      get attached() { return gate === 0; },
       // HOT. Copy W elements src[off .. off + W) into the next slot and publish
-      // with one TAIL store. Returns 0 OK, 1 FULL, 4 RETIRED. HEAD and TAIL live
-      // in the SAB only (never cached in a JS field); ARMED is re-loaded after
-      // the TAIL store, never reused from before it (a lost wake otherwise).
+      // with one TAIL store. Returns 0 OK, 1 FULL, 4 RETIRED, 5 REJECTED. HEAD
+      // and TAIL live in the SAB only (never cached in a JS field); ARMED is
+      // re-loaded after the TAIL store, never reused from before it (a lost
+      // wake otherwise). Pre-verdict and "transfer" lanes take slow().
       push: function (src, off) {
-        if (gate !== 0) return gate;
+        if (gate !== 0) return slow(src, off);
         var t = i32[32], h = Atomics.load(i32, 0);
         if (((t - h) | 0) === cap) return 1;
         var b = (t & mask) * w;
@@ -632,70 +705,128 @@ function makeMailbox(transport, layout, options) {
         return 0;
       },
       dispose: function () {
-        if (gate !== 0) return;
+        if (gate === 4) return;
         gate = 4;
-        Atomics.store(i32, 65, 1);
+        drop();
         reg.delete(id);
-        i32 = null; pv = null; meta.sab = null; sab = null;
-        var off = offHello; offHello = null;
-        off();                        // once, after teardown: its throw reaches the caller
+        var oh = offHello, oa = offAck, on = offNak;
+        offHello = null; offAck = null; offNak = null;
+        offAll(oh, oa, on, true);       // once, after teardown: the first throw reaches the caller
       }
     };
   }
 
-  var disposed = false, draining = false, offSab = null;
+  var disposed = false, draining = false, dead = false, sw = 0, offSab = null, offRec = null;
+  // Fallback ring: CAP records, allocated on the first lw:mb:rec. fbTail counts
+  // records received, fbHead records delivered (both wrap mod 2^32); owed is
+  // credit delivered but not yet acked (carried past an onRecord throw).
+  var ring = null, fbHead = 0, fbTail = 0, owed = 0;
+  // Fail closed: deliver nothing more, ever (drain returns 0; listeners inert).
+  function kill() {
+    dead = true; vd = true;
+    if (i32 !== null) Atomics.store(i32, 65, 1);
+    i32 = null; pv = null; ring = null; fbTail = fbHead;
+  }
+  // Deliver the fallback ring, then post one ack for everything delivered.
+  function fbDrain() {
+    var c = 0;
+    while (fbHead !== fbTail) {
+      onRecord(ring, (fbHead & mask) * w);
+      fbHead = (fbHead + 1) | 0;
+      owed++; c++;
+      if (dead) return c;               // disposed from inside the callback
+    }
+    transport.post("lw:mb:ack", { id: id, gen: 1, credit: owed, attached: pv !== null });
+    owed = 0;
+    return c;
+  }
+  // First SAB read: every fallback record (FBN of them) must be delivered.
+  function fbGate(hv) {
+    var d = (fbHead - Atomics.load(hv, 33)) | 0;
+    if (d === 0) { sw = 1; return true; }
+    if (d > 0) kill();                  // more delivered than the producer sent
+    return false;
+  }
   try {
-    var offS = transport.on("lw:mb:sab", function (m) {
-      if (disposed || pv !== null || !m || m.id !== id) return;
-      var buf = m.sab, len = -1;
-      try { len = sabLen.call(buf); } catch (e) { return; }  // not a real SAB
-      if (len !== stride) return;
-      var hv = new Int32Array(buf, 0, 96);
-      if (Atomics.load(hv, 66) !== cap || Atomics.load(hv, 67) !== w || Atomics.load(hv, 68) !== tcode ||
-          Atomics.load(hv, 69) !== 0 || Atomics.load(hv, 70) !== 0 ||
-          Atomics.load(hv, 64) !== m.gen || Atomics.load(hv, 65) !== 0) return;
-      i32 = hv;
-      pv = tcode === 1 ? new Float64Array(buf, 384, n) : new Int32Array(buf, 384, n);
+    offSab = onOff("lw:mb:sab", function (m) {
+      if (vd || !m || m.id !== id) return;
+      var buf = m.sab, len = -1, hv = null, why = 0;
+      if (share) { try { len = sabLen.call(buf); } catch (e) { len = -1; } }  // not a real SAB
+      if (len < 0) why = 6;
+      else {
+        if (len >= 384) {
+          hv = new Int32Array(buf, 0, 96);
+          if (Atomics.load(hv, 65) !== 0) return;   // retired: ignored, no reply, no verdict
+        }
+        if (len !== stride || Atomics.load(hv, 69) !== 0 || Atomics.load(hv, 70) !== 0) why = 1;
+        else if (Atomics.load(hv, 66) !== cap) why = 2;
+        else if (Atomics.load(hv, 67) !== w) why = 3;
+        else if (Atomics.load(hv, 68) !== tcode) why = 4;
+        else if (Atomics.load(hv, 64) !== m.gen) why = 5;
+      }
+      vd = true;
+      if (why === 0) {
+        i32 = hv;
+        pv = tcode === 1 ? new Float64Array(buf, 384, n) : new Int32Array(buf, 384, n);
+        if (mode === "auto") mode = "shared";
+        transport.post("lw:mb:ack", { id: id, gen: m.gen, credit: 0, attached: true });
+      } else {
+        mode = "transfer";
+        transport.post("lw:mb:nak", { id: id, gen: m.gen, why: why });
+      }
       if (offSab !== null) { var o = offSab; offSab = null; o(); }   // clear first: off() runs once
     });
-    if (typeof offS !== "function") throw new Error(P + " transport.on() must return an off() function");
-    offSab = offS;
-    if (pv !== null) { var offA = offSab; offSab = null; offA(); }   // attached inside on() (a replaying transport)
+    if (vd && offSab !== null) { var offA = offSab; offSab = null; offA(); }   // verdict inside on() (a replaying transport)
+    offRec = onOff("lw:mb:rec", function (m) {
+      if (dead || !m || m.id !== id) return;
+      var v = m.v;
+      if (!(tcode === 1 ? v instanceof Float64Array : v instanceof Int32Array) || v.length !== w ||
+          sw !== 0 || ((fbTail - fbHead) | 0) >= cap) { kill(); return; }   // malformed, after the switch, or overflow
+      if (ring === null) ring = tcode === 1 ? new Float64Array(n) : new Int32Array(n);
+      var b = (fbTail & mask) * w;
+      for (var k = 0; k < w; k++) ring[b + k] = v[k];
+      fbTail = (fbTail + 1) | 0;
+    });
     transport.post("lw:mb:hello", { id: id });
   } catch (e) {
     // A sync transport may have attached inside post (offSab already null).
-    disposed = true;
+    disposed = true; dead = true; vd = true;
     reg.delete(id);
-    i32 = null; pv = null;
+    i32 = null; pv = null; ring = null; fbTail = fbHead;
     // Teardown first, off() last and once: e wins over a throwing off().
-    var offC = offSab; offSab = null;
-    if (offC) { try { offC(); } catch (e2) { /* lane already inert */ } }
+    var os = offSab, orr = offRec; offSab = null; offRec = null;
+    offAll(os, orr, null, false);
     throw e;
   }
 
   return {
-    role: "consumer", mode: "shared", id: id,
+    role: "consumer", id: id,
     capacity: cap, words: w, type: type, byteLength: stride,
+    get mode() { return mode; },
     get attached() { return pv !== null; },
-    // Deliver every record published before this call: onRecord(view, offset)
-    // with `view` the lane's payload view (Int32Array or Float64Array over the
-    // payload at byte 384) and the record at view[offset .. offset + W). The
-    // view is live only inside the callback; HEAD is stored after it returns,
-    // so a throw leaves that record to be redelivered by the next drain().
-    // Returns the count delivered; 0 when not attached, disposed or nested.
-    // A TAIL outside [HEAD, HEAD + CAP] is corrupt: deliver nothing, mark STATE
-    // retired, detach (attached -> false) and return 0 (fail closed).
+    // Deliver every record received or published before this call:
+    // onRecord(view, offset) with the record at view[offset .. offset + W).
+    // Fallback records come first (`view` is the lane's fallback ring), then
+    // the SAB's (`view` is the payload view at byte 384). The view is live only
+    // inside the callback; HEAD is stored after it returns, so a throw leaves
+    // that record to be redelivered by the next drain(). Returns the count
+    // delivered; 0 when disposed, dead or nested. The SAB is read only once
+    // FBN fallback records were delivered. A TAIL outside [HEAD, HEAD + CAP]
+    // is corrupt: mark STATE retired, detach (attached -> false) and deliver
+    // nothing more, ever (fail closed).
     drain: function () {
-      if (pv === null || draining) return 0;
+      if (draining || dead) return 0;
       draining = true;
       var c = 0;
       try {
+        if (fbTail !== fbHead || owed !== 0) c = fbDrain();
+        if (pv === null) return c;
         var hv = i32, v = pv, h = hv[0], end = Atomics.load(hv, 32), fill = (end - h) | 0;
         if (fill < 0 || fill > cap) {
-          Atomics.store(hv, 65, 1);
-          i32 = null; pv = null;
-          return 0;
+          kill();
+          return c;
         }
+        if (sw === 0 && h !== end && !fbGate(hv)) return c;
         while (h !== end) {
           onRecord(v, (h & mask) * w);
           h = (h + 1) | 0;
@@ -710,11 +841,11 @@ function makeMailbox(transport, layout, options) {
     },
     dispose: function () {
       if (disposed) return;
-      disposed = true;
+      disposed = true; dead = true; vd = true;
       reg.delete(id);
-      i32 = null; pv = null;
-      var off = offSab; offSab = null;
-      if (off) off();                 // once, after teardown: its throw reaches the caller
+      i32 = null; pv = null; ring = null; fbTail = fbHead;
+      var os = offSab, orr = offRec; offSab = null; offRec = null;
+      offAll(os, orr, null, true);    // once, after teardown: the first throw reaches the caller
     }
   };
 }

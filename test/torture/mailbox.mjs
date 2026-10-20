@@ -111,7 +111,8 @@ export async function m1Tier() {
       C.lane = mailbox(t, { capacity: CAP, words: W, type }, { role: "consumer", mode: "shared", id, onRecord: C.onRecord });
       return C;
     });
-    await waitUntil(run, () => cons[0].lane.attached && cons[1].lane.attached && Atomics.load(ctl, CTL.W_STAGE) >= 1, "M1 attach");
+    await waitUntil(run, () => cons[0].lane.attached && cons[1].lane.attached &&
+      prods[0].lane.attached && prods[1].lane.attached && Atomics.load(ctl, CTL.W_STAGE) >= 1, "M1 attach");
 
     // Prologue: main's producers push until FULL; the worker may drain only after.
     const proOk = [0, 0], proFull = [0, 0];

@@ -162,10 +162,12 @@ async function runL1(ctl, seed) {
   const prods = L1.W2M.map(({ id, type }) =>
     producerState(mailbox(t, { capacity: CAP, words: W, type }, { role: "producer", mode: "shared", id }),
       seed ^ SALT.L1_KEY ^ id, W, type));
-  // The consumers attach when main's lw:mb:sab arrives: yield the event loop.
+  // The consumers attach when main's lw:mb:sab arrives, the producers when
+  // main's attached lw:mb:ack arrives (until then they ride the fallback):
+  // yield the event loop.
   const deadline = Date.now() + LIMIT_MS;
-  while (!cons[0].lane.attached || !cons[1].lane.attached) {
-    if (Date.now() > deadline) throw new Error("mb-entry L1: consumers never attached in 30 s (FAIL timeout)");
+  while (!cons[0].lane.attached || !cons[1].lane.attached || !prods[0].lane.attached || !prods[1].lane.attached) {
+    if (Date.now() > deadline) throw new Error("mb-entry L1: lanes never attached in 30 s (FAIL timeout)");
     await immediate();
   }
   signal(ctl, CTL.W_STAGE, 1);
@@ -223,6 +225,12 @@ async function runL3(ctl, seed) {
   const t = nodeThreadTransport(parentPort);
   const P = producerState(mailbox(t, { capacity: CAP, words: W, type: TYPE }, { role: "producer", mode: "shared", id: ID }),
     seed ^ SALT.L3_KEY, W, TYPE);
+  // The producer pushes on the SAB only after main's attached lw:mb:ack.
+  const deadline = Date.now() + LIMIT_MS;
+  while (!P.lane.attached) {
+    if (Date.now() > deadline) throw new Error("mb-entry L3: producer never attached in 30 s (FAIL timeout)");
+    await immediate();
+  }
   signal(ctl, CTL.W_STAGE, 1);
   // Main attaches, taps the SAB and writes HEAD = TAIL = START while we wait.
   waitWord(ctl, CTL.M_STAGE, 1, "L3 positions");
