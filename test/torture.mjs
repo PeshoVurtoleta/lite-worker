@@ -1,6 +1,6 @@
 // test/torture.mjs -- node --expose-gc test/torture.mjs
 //
-// The lite-worker torture suite. Runs eleven tiers in order; prints exactly
+// The lite-worker torture suite. Runs fifteen tiers in order; prints exactly
 // "ok" to stdout on success (exit 0) and a diagnostic + exit 1 on any failure.
 // Tier progress and the gate summary go to stderr so stdout stays clean.
 //
@@ -10,7 +10,11 @@
 // (lite-gl LAYOUT conformance, W2), T9 (controls), MP (behavioural parity of the
 // live Worker.js against the frozen 1.4.0 copy + its golden trace, with its own
 // in-process dropped++ mutant control and a retention pass -- see
-// torture/parity-trace.mjs). No pending placeholders remain.
+// torture/parity-trace.mjs), then the mailbox tiers (decisions/0003, see
+// torture/mailbox.mjs): M1 (L1 uncontended, main + 1 real worker, 4 lanes),
+// M3 (mb-layout conformance + L3 Int32 wrap), M4 (L4 slow consumer, FULL
+// accounting, retention) and MC (the C3 / C4 SPLICE controls with their twins).
+// No pending placeholders remain.
 //
 // Every gate ships a T9 control that MUST report failure; a gate that cannot
 // fail is decorative (W-01 was the limiting case -- a gate that never ran).
@@ -30,6 +34,7 @@ import {
   nodeThreadTransport,
 } from "./torture/harness.mjs";
 import { mpTier } from "./torture/parity-trace.mjs";
+import { m1Tier, m3Tier, m4Tier, mcTier } from "./torture/mailbox.mjs";
 
 // harness.mjs shadows the global URL with a Blob-URL mock, so resolve the entry
 // path via import.meta.resolve rather than `new URL(...)`.
@@ -1017,6 +1022,10 @@ const TIERS = [
   { name: "T8", run: t8 },
   { name: "T9", run: t9 },
   { name: "MP", run: mpTier },
+  { name: "M1", run: m1Tier },
+  { name: "M3", run: m3Tier },
+  { name: "M4", run: m4Tier },
+  { name: "MC", run: mcTier },
 ];
 
 let failed = false;
