@@ -291,9 +291,10 @@ and M-08 (Amendment A4).
 - C11 is the control: the trace the old M-08 allowed (CAP accepted, then FULL
   forever, no nak) must fail `handshakeOk`.
 
-Open: the numeric encoding of REJECTED, and the `lw:mb:nak` / `lw:mb:ack`
-payload fields, are M3's pick (as M-04 says for the other four outcomes).
-Status: decided as Q6, see "M3 decisions".
+Decided (see Q6 in "M3 decisions" and the B3a note): REJECTED is push
+code 5; `lw:mb:nak {id, gen, why}` and `lw:mb:ack {id, gen, credit,
+attached}` are the payloads. (Was: open, M3's pick as M-04 says for the
+other four outcomes.)
 
 ## T-08 -- M3 B0 parity
 
@@ -437,6 +438,43 @@ proposed; none is code yet.
   payload-only typed array (byte 384 on); the record at position p is
   elements `[(p & (CAP - 1)) * W, + W)`.
 
+  **B3a note (2026-10-21).** Checked against Worker.js at 082daed (B3a-1):
+  - Before the verdict the producer posts each accepted push as
+    `lw:mb:rec {id, v}` (v a fresh typed array of W elements). The credit
+    window is CAP; it opens on the consumer's first message for the id
+    (hello, ack or nak), and is decremented only after `post()` returned, so
+    a throwing post() accepts nothing.
+  - The verdict is `lw:mb:ack {id, gen, credit, attached}` or
+    `lw:mb:nak {id, gen, why}`. On an attached ack the producer stores its
+    fallback count in FBN (word 33) before its first TAIL store, then gate
+    goes to 0 (the SAB path).
+  - Modes: "auto" (default), "shared", "transfer". After a nak a "shared"
+    producer returns REJECTED (5) on every push; an "auto" producer reports
+    mode "transfer" and stays lossless on the fallback.
+  - AD5: the consumer's `mode` reports "transfer" after ANY nak (every
+    configured mode) and keeps delivering the fallback, lossless.
+  - AD6 B2: credit owed by an ack whose post() threw stays in `owed`; the
+    next drain retries it (`fbTail !== fbHead || owed !== 0`).
+  - Limit (AD7 b; AD7 recorded it as accepted on a wrong trace): an ack
+    post() that delivers and THEN throws leaves its credit in `owed`; the
+    next drain re-posts it plus any credit delivered since. If the re-post
+    fits (credit <= CAP - window) the producer is credited twice and can
+    send past CAP: the consumer's overflow check kills the lane, every
+    record the consumer still held and every one pushed OK after the throw
+    is lost, and push ends at FULL forever (scratch probe: 12 OK pushes
+    after the throw, 0 delivered). If it does not fit, the producer
+    ignores it whole and loses the credit it legitimately carried: the
+    window shrinks by that much for the lane's life (FULL forever once
+    the loss reaches CAP). Decided (maintainer,
+    2026-10-21): engine fix in B3a-3 -- the ack carries the consumer's
+    cumulative delivered count (mod 2^32) and the producer takes the delta,
+    so a re-post is idempotent. No test gates it yet.
+  - Known gaps (AD7 c, d): killNoRingNull and ctorCatchNoDead (ring
+    retention after a kill / constructor failure) have no test. Fallback
+    counters past 2^30 box on 31-bit-Smi engines (fallback path only, which
+    already allocates); the wrap at 2^31 is untested (counters cannot be
+    seeded).
+
 Deltas to decisions/0002 M-03 (explicit, not silent):
 
 - ARMED is word 1, in the consumer line with HEAD (M-03 left the word to
@@ -469,6 +507,8 @@ Q5-Q8 are decided: see "M3 decisions" above. The original text is kept.
 - **Q5.** Thread count for L10's wake-up bursts beyond "single thread" for
   the arm count; and whether L4 / L10 each need a worker variant.
 - **Q6.** The numeric encoding of REJECTED and the nak / ack payloads (T-07).
+  Decided: REJECTED 5; nak `{id, gen, why}`, ack `{id, gen, credit,
+  attached}` (see Q6 above and the B3a note).
 - **Q7.** The seeds and PRNG for any randomized op stream (L1, L4 mixed
   ops, L6) and the asserted coverage floor; the suite rule wants a seeded
   32-bit PRNG with independent key and op streams, which M3's coder chooses.

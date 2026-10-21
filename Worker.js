@@ -442,8 +442,9 @@ function makeFrameChannel(transport, layout, options) {
 //   consumer line   [0] HEAD     next position to read (consumer-only writes)
 //                   [1] ARMED    consumer waits on TAIL when nonzero
 //   producer line  [32] TAIL     next position to write; the store publishes
-//                  [33] FBN      fallback record count before the first SAB
-//                                TAIL store (written 0 on the shared path)
+//                  [33] FBN      fallback records the producer sent before
+//                                the switch: 0 at construction, stored at
+//                                its attached ack, before the first TAIL store
 //   cold line      [64] GEN      generation, 1 at construction
 //                  [65] STATE    0 live, 1 retired
 //                  [66] CAP      capacity in records, a power of two
@@ -467,12 +468,44 @@ function makeFrameChannel(transport, layout, options) {
 // Hot words sit 128 B apart, so they never share a line or an adjacent-line
 // prefetch pair, whatever the SAB base alignment.
 //
-// Handshake (typed plane, reserved "lw:mb:*"): the producer allocates the SAB,
-// writes the cold line and posts lw:mb:sab { id, gen, sab }; it re-posts on
-// every lw:mb:hello { id } with its id. The consumer posts lw:mb:hello at
-// construction and attaches only to a real SharedArrayBuffer whose byteLength,
-// CAP, W, TYPE, SLOTS, SLOT_BYTES match its own layout, whose GEN equals
-// msg.gen and whose STATE is 0; anything else is ignored (fail closed).
+// Modes: "auto" (default) shares where SharedArrayBuffer + cross-origin
+// isolation exist and falls back otherwise; "shared" throws at construction
+// without them; "transfer" never uses a SAB. Every mode rides the typed plane
+// (reserved "lw:mb:*"; message fields are exactly these):
+//   lw:mb:sab   { id, gen, sab }   producer -> consumer, the offer: posted at
+//               construction (sab null on a producer without a SAB) and
+//               re-posted on every lw:mb:hello with its id until the verdict.
+//   lw:mb:hello { id }             consumer -> producer, at construction.
+//   lw:mb:ack   { id, gen, credit, attached }  consumer -> producer: the
+//               attaching verdict (credit 0, attached true), then one per
+//               fallback drain (credit = records delivered since the last
+//               ack post() returned, attached = the consumer holds the SAB
+//               views).
+//   lw:mb:nak   { id, gen, why }   consumer -> producer, the refusing verdict.
+//   lw:mb:rec   { id, v }          producer -> consumer, one fallback record
+//               (v a fresh Int32Array / Float64Array of W elements).
+// Credit: the producer's window is 0 until the first consumer message for its
+// id (hello, or an ack / nak of gen 1), then opens to CAP; each lw:mb:rec
+// spends one, each ack returns `credit` (not an integer in [0, CAP - window]:
+// its credit and attached are ignored; it still opens the window). push()
+// returns FULL at window 0, so the consumer's CAP-record fallback ring cannot
+// overflow. Before the verdict, and on a "transfer" lane, every push() takes
+// the fallback.
+// Verdict (consumer, latched once): an offer this end cannot read as a SAB
+// (mode "transfer", no SAB / COI, not a real SharedArrayBuffer) -> nak why 6;
+// a real one whose STATE is not 0 -> ignored (no reply, no verdict); one whose
+// byteLength, SLOTS, SLOT_BYTES (why 1), CAP (2), W (3), TYPE (4) or GEN vs
+// msg.gen (5) do not match its own layout -> nak with that why (fail closed);
+// else it attaches and acks.
+// Switch: the producer's attached ack stores FBN (the records it sent on the
+// fallback) and then pushes to the SAB. The consumer's drain() delivers the
+// fallback ring first and reads the SAB only once it has delivered exactly FBN
+// fallback records (more -> fail closed). A lw:mb:rec after the switch, a
+// malformed one or one past CAP pending fails the consumer closed.
+// A nak: the producer retires its SAB (STATE 1, dropped); "shared" -> push()
+// returns REJECTED, "auto" -> settles "transfer" on the fallback. The
+// consumer reports mode "transfer" after any nak it sent, in every configured
+// mode, and keeps delivering the fallback (lossless).
 // ---------------------------------------------------------------------------
 function makeMailbox(transport, layout, options) {
   var P = "lite-worker: mailbox";
@@ -719,7 +752,8 @@ function makeMailbox(transport, layout, options) {
   var disposed = false, draining = false, dead = false, sw = 0, offSab = null, offRec = null;
   // Fallback ring: CAP records, allocated on the first lw:mb:rec. fbTail counts
   // records received, fbHead records delivered (both wrap mod 2^32); owed is
-  // credit delivered but not yet acked (carried past an onRecord throw).
+  // credit delivered but not yet acked (carried past an onRecord throw or a
+  // throwing ack post(), and retried by the next drain()).
   var ring = null, fbHead = 0, fbTail = 0, owed = 0;
   // Fail closed: deliver nothing more, ever (drain returns 0; listeners inert).
   function kill() {
@@ -808,12 +842,13 @@ function makeMailbox(transport, layout, options) {
     // onRecord(view, offset) with the record at view[offset .. offset + W).
     // Fallback records come first (`view` is the lane's fallback ring), then
     // the SAB's (`view` is the payload view at byte 384). The view is live only
-    // inside the callback; HEAD is stored after it returns, so a throw leaves
-    // that record to be redelivered by the next drain(). Returns the count
-    // delivered; 0 when disposed, dead or nested. The SAB is read only once
-    // FBN fallback records were delivered. A TAIL outside [HEAD, HEAD + CAP]
-    // is corrupt: mark STATE retired, detach (attached -> false) and deliver
-    // nothing more, ever (fail closed).
+    // inside the callback; HEAD (fbHead on the fallback) is stored after it
+    // returns, so a throw leaves that record to be redelivered by the next
+    // drain(). A fallback pass posts one lw:mb:ack returning the credit owed.
+    // Returns the count delivered; 0 when disposed, dead or nested. The SAB is
+    // read only once FBN fallback records were delivered. A TAIL outside
+    // [HEAD, HEAD + CAP] is corrupt: mark STATE retired, detach (attached ->
+    // false) and deliver nothing more, ever (fail closed).
     drain: function () {
       if (draining || dead) return 0;
       draining = true;
@@ -1113,9 +1148,10 @@ class WorkerHandle {
 
   // --- mailbox -------------------------------------------------------------
 
-  // Build one end of a lossless SPSC mailbox lane (shared mode) over this
-  // handle's typed plane. The other end is ctx.mailbox(layout, options) in the
-  // worker with the same options.id. Reserved typed messages: "lw:mb:*".
+  // Build one end of a lossless SPSC mailbox lane (mode "auto" | "shared" |
+  // "transfer", default "auto") over this handle's typed plane. The other end
+  // is ctx.mailbox(layout, options) in the worker with the same options.id.
+  // Reserved typed messages: "lw:mb:*".
   mailbox(layout, options) {
     return makeMailbox(this, layout, options);
   }
@@ -1283,28 +1319,54 @@ export function frameChannel(transport, layout, options) {
 
 /**
  * Build one end of a lossless, bounded, single-producer / single-consumer
- * mailbox lane over a SharedArrayBuffer (Lamport's SPSC ring). `transport` is a
- * WorkerHandle (main thread) or the worker-side `ctx` -- anything exposing
- * `post(type, data)` and `on(type, fn) -> off`; the SAB handshake rides the
- * typed plane ("lw:mb:*" is reserved). Both ends use the same `options.id`
- * (default 0, at most 2^30 - 1); a second live lane with the same id AND role
- * on one transport throws (a producer and a consumer may share an id).
+ * mailbox lane over a SharedArrayBuffer (Lamport's SPSC ring), with a
+ * credit-bounded typed-plane fallback. `transport` is a WorkerHandle (main
+ * thread) or the worker-side `ctx` -- anything exposing `post(type, data)` and
+ * `on(type, fn) -> off`; the handshake, the fallback records and the credit
+ * acks ride the typed plane ("lw:mb:*" is reserved). Both ends use the same
+ * `options.id` (default 0, at most 2^30 - 1); a second live lane with the same
+ * id AND role on one transport throws (a producer and a consumer may share an
+ * id).
  *
  * `layout` is `{ capacity, words, type }`: capacity a power of two in
  * [1, 2^29], words per record an integer >= 1, type "i32" (default) or "f64".
- * Only `mode: "shared"` exists in this release (it is required).
+ * `options.mode` is "auto" (default: the SAB where SharedArrayBuffer and
+ * cross-origin isolation exist, else the fallback), "shared" (the SAB once
+ * acked, REJECTED after a nak; throws at construction without
+ * SharedArrayBuffer / isolation) or
+ * "transfer" (the fallback only). Until the consumer's verdict every push()
+ * rides the fallback, so no record is lost while the handshake is in flight.
  *
  * Producer: `push(src, off)` copies `words` elements of `src` from `off` and
- * returns a Smi outcome -- mailbox.OK (0) or mailbox.FULL (1), mailbox.RETIRED
- * (4) after dispose(); never throws on a valid typed array, never drops silently. An i32 lane stores
- * ToInt32 of each value (no validation). Consumer: `drain()` calls
- * `options.onRecord(view, offset)` once per published record, `view` being the
- * lane's payload view (Int32Array / Float64Array) valid only inside the
- * callback, and returns the count delivered.
+ * returns a Smi outcome -- mailbox.OK (0); mailbox.FULL (1) when the ring or
+ * the fallback credit window is full; mailbox.RETIRED (4) after dispose();
+ * mailbox.REJECTED (5) on a "shared" lane whose consumer refused the SAB
+ * (naked). mailbox.SLAB_EXHAUSTED (2) and mailbox.SLOT_TOO_SMALL (3) are
+ * reserved for the slab and never returned in this release. push() never
+ * drops silently and never throws on a valid typed array, except that a
+ * transport post() throwing on the fallback propagates (that record is not
+ * accepted: no credit spent). Limit (decisions/0003 B3a note, AD7 b; engine
+ * fix scheduled as B3a-3): an ack post() that delivers and THEN throws is
+ * re-posted by the next drain, which can credit the producer twice; it can
+ * then send past CAP, the consumer's overflow check kills the lane, every
+ * record it still held and every one pushed OK after is lost, and push() ends
+ * at FULL forever. An i32 lane stores ToInt32 of each value (no validation).
+ * Consumer: `drain()` calls `options.onRecord(view, offset)` once per
+ * record, fallback records first (`view` = the lane's fallback ring), then
+ * the SAB's (`view` = the payload view), both Int32Array / Float64Array
+ * valid only inside the callback, and returns the count delivered.
+ *
+ * `mode` getter: the configured mode, except that an "auto" lane reports
+ * "shared" once attached (producer: after the consumer's attached ack) and
+ * "transfer" after a nak; a consumer reports "transfer" after any nak it
+ * sent, in every configured mode, and keeps delivering the fallback.
+ * `attached` getter: producer -- the consumer acked the SAB and push() writes
+ * it (false again after dispose()); consumer -- it holds the SAB views (false
+ * before the verdict, on the fallback, after dispose() or a fail-closed kill).
  *
  * @param {{ post: Function, on: Function }} transport
  * @param {{ capacity: number, words: number, type?: "i32"|"f64" }} layout
- * @param {{ role: "producer"|"consumer", mode: "shared", id?: number, onRecord?: Function }} options
+ * @param {{ role: "producer"|"consumer", mode?: "auto"|"shared"|"transfer", id?: number, onRecord?: Function }} options
  */
 export function mailbox(transport, layout, options) {
   return makeMailbox(transport, layout, options);

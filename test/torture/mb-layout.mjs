@@ -12,7 +12,7 @@
 export const HEAD = 0;        // consumer line: next position to read
 export const ARMED = 1;       // consumer waits on TAIL when nonzero
 export const TAIL = 32;       // producer line: next position to write (the publish)
-export const FBN = 33;        // fallback record count (0 on the shared path)
+export const FBN = 33;        // fallback record count, stored at the switch to the SAB
 export const GEN = 64;        // cold line: generation, 1 at construction
 export const STATE = 65;      // 0 live, 1 retired
 export const CAP = 66;        // capacity in records (a power of two)
